@@ -1,5 +1,4 @@
-import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
+import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -14,10 +13,7 @@ class Database {
 
   async init() {
     try {
-      this.db = await open({
-        filename: dbPath,
-        driver: sqlite3.Database
-      });
+      this.db = new Database(dbPath);
 
       // Creează tabelele dacă nu există
       await this.createTables();
@@ -30,7 +26,7 @@ class Database {
 
   async createTables() {
     // Tabel pentru sesiuni
-    await this.db.exec(`
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         session_id TEXT PRIMARY KEY,
         agent_type TEXT NOT NULL,
@@ -42,7 +38,7 @@ class Database {
     `);
 
     // Tabel pentru bookings
-    await this.db.exec(`
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS bookings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT NOT NULL,
@@ -58,7 +54,7 @@ class Database {
     `);
 
     // Tabel pentru conversații
-    await this.db.exec(`
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS conversations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT NOT NULL,
@@ -71,7 +67,7 @@ class Database {
     `);
 
     // Indexuri pentru performanță
-    await this.db.exec(`
+    this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions (agent_type);
       CREATE INDEX IF NOT EXISTS idx_bookings_session ON bookings (session_id);
       CREATE INDEX IF NOT EXISTS idx_conversations_session ON conversations (session_id);
@@ -82,10 +78,10 @@ class Database {
   async saveSession(sessionId, agentType, step, data = {}) {
     try {
       const dataJson = JSON.stringify(data);
-      await this.db.run(`
+      this.db.prepare(`
         INSERT OR REPLACE INTO sessions (session_id, agent_type, step, data, updated_at)
         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `, [sessionId, agentType, step, dataJson]);
+      `).run(sessionId, agentType, step, dataJson);
     } catch (error) {
       console.error('Error saving session:', error);
       throw error;
