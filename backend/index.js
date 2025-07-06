@@ -43,7 +43,7 @@ const sessionState = {};
 // Inițializează baza de date
 async function initializeDatabase() {
   try {
-    await database.init();
+    database.init();
     console.log('Database initialized successfully');
   } catch (error) {
     console.error('Failed to initialize database:', error);
@@ -105,12 +105,12 @@ app.post('/chat', async (req, res) => {
       console.log(`[AI] LangChain response from ${aiResult.agent} agent:`, aiResult.reply);
       
       // 3. Persistență
-      await database.saveSession(sessionId, aiResult.agent, 'active', { 
+      database.saveSession(sessionId, aiResult.agent, 'active', { 
         language: aiResult.language,
         confidence: aiResult.confidence,
         orchestrator: 'langchain'
       });
-      await database.saveConversation(sessionId, aiResult.agent, message, aiResult.reply);
+      database.saveConversation(sessionId, aiResult.agent, message, aiResult.reply);
       
       // 4. Escaladare dacă e necesar
       if (shouldEscalate(sessionId, message, aiResult.reply)) {
@@ -183,11 +183,11 @@ app.post('/chat', async (req, res) => {
       }
       
       // Persistență pentru sistemul legacy
-      await database.saveSession(sessionId, agent, 'active', { 
+      database.saveSession(sessionId, agent, 'active', { 
         language: userLanguage,
         orchestrator: 'legacy'
       });
-      await database.saveConversation(sessionId, agent, message, reply);
+      database.saveConversation(sessionId, agent, message, reply);
       
       if (shouldEscalate(sessionId, message, reply)) {
         sendTelegramAlert(sessionId, message, { agent, reply });
@@ -214,7 +214,7 @@ app.post('/chat', async (req, res) => {
 app.get('/conversations/:sessionId', async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const history = await database.getConversationHistory(sessionId, 50);
+    const history = database.getConversationHistory(sessionId, 50);
     res.json({ history });
   } catch (error) {
     console.error('Error getting conversation history:', error);
@@ -398,7 +398,7 @@ app.get('/routes', async (req, res) => {
 // Endpoint pentru statistici
 app.get('/stats', async (req, res) => {
   try {
-    const stats = await database.getStats();
+    const stats = database.getStats();
     res.json(stats);
   } catch (error) {
     console.error('Error getting stats:', error);
@@ -409,7 +409,7 @@ app.get('/stats', async (req, res) => {
 // Endpoint pentru KPIs
 app.get('/api/kpis', async (req, res) => {
   try {
-    const stats = await database.getStats();
+    const stats = database.getStats();
     const langChainStats = langChainIntegration.getStats();
     
     const kpis = {
@@ -570,10 +570,10 @@ app.post('/api/language', async (req, res) => {
   
   try {
     // Update session language in database
-    const dbSession = await database.getSession(sessionId);
+    const dbSession = database.getSession(sessionId);
     if (dbSession) {
       dbSession.data = { ...dbSession.data, language };
-      await database.saveSession(sessionId, dbSession.agent, dbSession.step, dbSession.data);
+      database.saveSession(sessionId, dbSession.agent, dbSession.step, dbSession.data);
     }
     
     // Update local session state

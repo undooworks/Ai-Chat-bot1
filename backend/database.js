@@ -16,7 +16,7 @@ class ChatDatabase {
       this.db = new Database(dbPath);
 
       // Creează tabelele dacă nu există
-      await this.createTables();
+      this.createTables();
       console.log('Database initialized successfully');
     } catch (error) {
       console.error('Database initialization error:', error);
@@ -24,7 +24,7 @@ class ChatDatabase {
     }
   }
 
-  async createTables() {
+  createTables() {
     // Tabel pentru sesiuni
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
@@ -75,7 +75,7 @@ class ChatDatabase {
   }
 
   // Gestionare sesiuni
-  async saveSession(sessionId, agentType, step, data = {}) {
+  saveSession(sessionId, agentType, step, data = {}) {
     try {
       const dataJson = JSON.stringify(data);
       this.db.prepare(`
@@ -88,11 +88,11 @@ class ChatDatabase {
     }
   }
 
-  async getSession(sessionId) {
+  getSession(sessionId) {
     try {
-      const row = await this.db.get(`
+      const row = this.db.prepare(`
         SELECT * FROM sessions WHERE session_id = ?
-      `, [sessionId]);
+      `).get(sessionId);
       
       if (row) {
         return {
@@ -107,11 +107,11 @@ class ChatDatabase {
     }
   }
 
-  async deleteSession(sessionId) {
+  deleteSession(sessionId) {
     try {
-      await this.db.run(`
+      this.db.prepare(`
         DELETE FROM sessions WHERE session_id = ?
-      `, [sessionId]);
+      `).run(sessionId);
     } catch (error) {
       console.error('Error deleting session:', error);
       throw error;
@@ -119,25 +119,25 @@ class ChatDatabase {
   }
 
   // Gestionare bookings
-  async saveBooking(sessionId, busNumber, passenger, route, departureDate, price) {
+  saveBooking(sessionId, busNumber, passenger, route, departureDate, price) {
     try {
-      const result = await this.db.run(`
+      const result = this.db.prepare(`
         INSERT INTO bookings (session_id, bus_number, passenger, route, departure_date, price)
         VALUES (?, ?, ?, ?, ?, ?)
-      `, [sessionId, busNumber, passenger, route, departureDate, price]);
+      `).run(sessionId, busNumber, passenger, route, departureDate, price);
       
-      return result.lastID;
+      return result.lastInsertRowid;
     } catch (error) {
       console.error('Error saving booking:', error);
       throw error;
     }
   }
 
-  async getBookings(sessionId) {
+  getBookings(sessionId) {
     try {
-      const rows = await this.db.all(`
+      const rows = this.db.prepare(`
         SELECT * FROM bookings WHERE session_id = ? ORDER BY created_at DESC
-      `, [sessionId]);
+      `).all(sessionId);
       
       return rows;
     } catch (error) {
@@ -146,11 +146,11 @@ class ChatDatabase {
     }
   }
 
-  async updateBookingStatus(bookingId, status) {
+  updateBookingStatus(bookingId, status) {
     try {
-      await this.db.run(`
+      this.db.prepare(`
         UPDATE bookings SET status = ? WHERE id = ?
-      `, [status, bookingId]);
+      `).run(status, bookingId);
     } catch (error) {
       console.error('Error updating booking status:', error);
       throw error;
@@ -158,26 +158,26 @@ class ChatDatabase {
   }
 
   // Gestionare conversații
-  async saveConversation(sessionId, agentType, message, response) {
+  saveConversation(sessionId, agentType, message, response) {
     try {
-      await this.db.run(`
+      this.db.prepare(`
         INSERT INTO conversations (session_id, agent_type, message, response)
         VALUES (?, ?, ?, ?)
-      `, [sessionId, agentType, message, response]);
+      `).run(sessionId, agentType, message, response);
     } catch (error) {
       console.error('Error saving conversation:', error);
       throw error;
     }
   }
 
-  async getConversationHistory(sessionId, limit = 10) {
+  getConversationHistory(sessionId, limit = 10) {
     try {
-      const rows = await this.db.all(`
+      const rows = this.db.prepare(`
         SELECT * FROM conversations 
         WHERE session_id = ? 
         ORDER BY created_at DESC 
         LIMIT ?
-      `, [sessionId, limit]);
+      `).all(sessionId, limit);
       
       return rows.reverse(); // Returnează în ordine cronologică
     } catch (error) {
@@ -187,25 +187,25 @@ class ChatDatabase {
   }
 
   // Statistici
-  async getStats() {
+  getStats() {
     try {
-      const stats = await this.db.get(`
+      const stats = this.db.prepare(`
         SELECT 
           COUNT(DISTINCT session_id) as total_sessions,
           COUNT(*) as total_conversations,
           COUNT(DISTINCT CASE WHEN agent_type = 'BookingAgent' THEN session_id END) as booking_sessions,
           COUNT(DISTINCT CASE WHEN agent_type = 'SupportAgent' THEN session_id END) as support_sessions
         FROM conversations
-      `);
+      `).get();
       
-      const bookingStats = await this.db.get(`
+      const bookingStats = this.db.prepare(`
         SELECT 
           COUNT(*) as total_bookings,
           COUNT(CASE WHEN status = 'confirmed' THEN 1 END) as confirmed_bookings,
           COUNT(CASE WHEN status = 'cancelled' THEN 1 END) as cancelled_bookings,
           AVG(price) as avg_price
         FROM bookings
-      `);
+      `).get();
       
       return { ...stats, ...bookingStats };
     } catch (error) {
@@ -215,15 +215,15 @@ class ChatDatabase {
   }
 
   // Cleanup sesiuni vechi (opțional)
-  async cleanupOldSessions(daysOld = 30) {
+  cleanupOldSessions(daysOld = 30) {
     try {
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - daysOld);
       
-      await this.db.run(`
+      this.db.prepare(`
         DELETE FROM sessions 
         WHERE updated_at < ?
-      `, [cutoffDate.toISOString()]);
+      `).run(cutoffDate.toISOString());
       
       console.log(`Cleaned up sessions older than ${daysOld} days`);
     } catch (error) {
@@ -232,9 +232,9 @@ class ChatDatabase {
     }
   }
 
-  async close() {
+  close() {
     if (this.db) {
-      await this.db.close();
+      this.db.close();
     }
   }
 }
