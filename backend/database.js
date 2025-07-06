@@ -6,7 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const dbPath = path.resolve(__dirname, 'data', 'chatbot.db');
 
-class Database {
+class ChatDatabase {
   constructor() {
     this.db = null;
   }
@@ -240,6 +240,6 @@ class Database {
 }
 
 // Singleton instance
-const database = new Database();
+const database = new ChatDatabase();
 
 export default database; 
