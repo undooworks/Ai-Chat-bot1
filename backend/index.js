@@ -43,7 +43,7 @@ const sessionState = {};
 // Inițializează baza de date
 async function initializeDatabase() {
   try {
-    database.init();
+    await database.init();
     console.log('Database initialized successfully');
   } catch (error) {
     console.error('Failed to initialize database:', error);
