@@ -1,0 +1,23 @@
+{
+  "name": "ai-chatbot",
+  "version": "0.2.0",
+  "description": "AI Chatbot with multiple agents and Telegram integration",
+  "main": "backend/index.js",
+  "scripts": {
+    "start": "cd backend && npm start",
+    "dev": "cd backend && npm run dev",
+    "install-deps": "cd backend && npm install",
+    "test": "cd backend && npm test",
+    "build": "echo 'No build step required'"
+  },
+  "keywords": [
+    "chatbot",
+    "ai",
+    "nodejs",
+    "express",
+    "groq",
+    "telegram"
+  ],
+  "author": "AI Chatbot Team",
+  "license": "MIT"
+} 

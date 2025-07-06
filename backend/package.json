@@ -1,0 +1,61 @@
+{
+  "name": "ai-chatbot-backend",
+  "version": "0.2.0",
+  "description": "AI Chatbot Backend with multiple agents",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
+  },
+  "dependencies": {
+    "@langchain/groq": "^0.2.3",
+    "@langchain/langgraph": "^0.3.6",
+    "dotenv": "^16.6.1",
+    "express": "^4.18.2",
+    "groq-sdk": "^0.3.0",
+    "langchain": "^0.1.37",
+    "node-fetch": "^3.3.2",
+    "nodemailer": "^6.9.7",
+    "sqlite": "^5.0.1",
+    "sqlite3": "^5.1.6",
+    "telegraf": "^4.15.6"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "preset": "default",
+    "extensionsToTreatAsEsm": [
+      ".js"
+    ],
+    "globals": {
+      "ts-jest": {
+        "useESM": true
+      }
+    },
+    "moduleNameMapping": {
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    },
+    "testEnvironment": "node"
+  },
+  "keywords": [
+    "chatbot",
+    "ai",
+    "bus",
+    "booking",
+    "support",
+    "telegram",
+    "i18n",
+    "locales",
+    "romana",
+    "english",
+    "francais",
+    "deutsch"
+  ],
+  "author": "AI Chatbot Team",
+  "license": "MIT"
+}

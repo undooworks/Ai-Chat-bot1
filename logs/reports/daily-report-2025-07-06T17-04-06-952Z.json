@@ -1,0 +1,32 @@
+{
+  "date": "7/6/2025",
+  "totalConversations": 150,
+  "totalBookings": 25,
+  "totalSupport": 10,
+  "totalFallbacks": 5,
+  "averageResponseTime": 1200,
+  "topAgents": [
+    {
+      "name": "booking",
+      "count": 15
+    },
+    {
+      "name": "support",
+      "count": 8
+    },
+    {
+      "name": "greeting",
+      "count": 12
+    }
+  ],
+  "errors": [
+    {
+      "type": "LangChain",
+      "message": "agent_scratchpad missing"
+    },
+    {
+      "type": "Email",
+      "message": "SMTP connection failed"
+    }
+  ]
+}

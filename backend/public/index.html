@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chatbot - Test Interface</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .chat-container {
+            width: 90%;
+            max-width: 800px;
+            height: 80vh;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            position: relative;
+        }
+
+        .language-selector {
+            position: absolute;
+            top: 10px;
+            right: 20px;
+            display: flex;
+            gap: 5px;
+        }
+
+        .lang-btn {
+            padding: 5px 10px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 15px;
+            color: white;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s;
+        }
+
+        .lang-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .lang-btn.active {
+            background: rgba(255, 255, 255, 0.4);
+            border-color: rgba(255, 255, 255, 0.6);
+        }
+
+        .chat-header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .chat-header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: #f8f9fa;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+            align-items: flex-start;
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message.bot {
+            justify-content: flex-start;
+        }
+
+        .message-content {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            word-wrap: break-word;
+            line-height: 1.4;
+        }
+
+        .message.user .message-content {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.bot .message-content {
+            background: white;
+            color: #333;
+            border: 1px solid #e1e5e9;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message-time {
+            font-size: 11px;
+            opacity: 0.7;
+            margin-top: 5px;
+        }
+
+        .chat-input {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #e1e5e9;
+            display: flex;
+            gap: 10px;
+        }
+
+        .chat-input input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e1e5e9;
+            border-radius: 25px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        .chat-input input:focus {
+            border-color: #667eea;
+        }
+
+        .chat-input button {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: transform 0.2s;
+        }
+
+        .chat-input button:hover {
+            transform: translateY(-2px);
+        }
+
+        .chat-input button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .session-info {
+            background: #e3f2fd;
+            padding: 10px 20px;
+            border-bottom: 1px solid #e1e5e9;
+            font-size: 12px;
+            color: #1976d2;
+        }
+
+        .quick-actions {
+            padding: 15px 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e1e5e9;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .quick-action {
+            padding: 8px 16px;
+            background: white;
+            border: 1px solid #e1e5e9;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s;
+        }
+
+        .quick-action:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .typing-indicator {
+            display: none;
+            padding: 12px 16px;
+            background: white;
+            border: 1px solid #e1e5e9;
+            border-radius: 18px;
+            border-bottom-left-radius: 4px;
+            color: #666;
+            font-style: italic;
+        }
+
+        .typing-indicator.show {
+            display: block;
+        }
+
+        @media (max-width: 768px) {
+            .chat-container {
+                width: 95%;
+                height: 90vh;
+            }
+            
+            .message-content {
+                max-width: 85%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <div class="language-selector">
+                <button class="lang-btn active" data-lang="ro">RO</button>
+                <button class="lang-btn" data-lang="en">EN</button>
+                <button class="lang-btn" data-lang="fr">FR</button>
+                <button class="lang-btn" data-lang="de">DE</button>
+            </div>
+            <h1 id="title">AI Chatbot - Test Interface</h1>
+            <p id="subtitle">Test the chatbot with different scenarios</p>
+        </div>
+        
+        <div class="session-info">
+            <span id="session-id">Session: test-</span> | 
+            <span id="current-language">Language: RO</span>
+        </div>
+        
+        <div class="quick-actions">
+            <div class="quick-action" data-action="greeting">👋 Greeting</div>
+            <div class="quick-action" data-action="booking">🎫 Booking</div>
+            <div class="quick-action" data-action="support">🆘 Support</div>
+            <div class="quick-action" data-action="lost-luggage">💼 Lost Luggage</div>
+            <div class="quick-action" data-action="bus-delay">⏰ Bus Delay</div>
+            <div class="quick-action" data-action="urgent">🚨 Urgent</div>
+        </div>
+        
+        <div class="chat-messages" id="chat-messages">
+            <!-- Messages will be added here -->
+        </div>
+        
+        <div class="typing-indicator" id="typing-indicator">
+            AI is typing...
+        </div>
+        
+        <div class="chat-input">
+            <input type="text" id="message-input" placeholder="Type your message..." />
+            <button id="send-button">Send</button>
+        </div>
+    </div>
+
+    <script>
+        // i18n support
+        let currentLanguage = 'ro';
+        let translations = {};
+        let sessionId = 'test-' + Math.random().toString(36).substr(2, 9);
+
+        // Load translations for a language
+        async function loadTranslations(lang) {
+            try {
+                const response = await fetch(`/api/translations/${lang}`);
+                const data = await response.json();
+                if (data.translations) {
+                    translations[lang] = data.translations;
+                }
+            } catch (error) {
+                console.error('Failed to load translations:', error);
+            }
+        }
+
+        // Get translated text
+        function t(key, lang = currentLanguage) {
+            if (translations[lang] && translations[lang][key]) {
+                return translations[lang][key];
+            }
+            // Fallback to key if translation not found
+            return key;
+        }
+
+        // Change language
+        async function changeLanguage(lang) {
+            currentLanguage = lang;
+            document.documentElement.lang = lang;
+            
+            // Update UI
+            document.querySelectorAll('.lang-btn').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.dataset.lang === lang) {
+                    btn.classList.add('active');
+                }
+            });
+            
+            document.getElementById('current-language').textContent = `Language: ${lang.toUpperCase()}`;
+            document.getElementById('message-input').placeholder = t('input_placeholder', lang);
+            
+            // Update session language
+            try {
+                await fetch('/api/language', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId, language: lang })
+                });
+            } catch (error) {
+                console.error('Failed to update session language:', error);
+            }
+        }
+
+        // Initialize language support
+        async function initLanguage() {
+            // Load translations for all languages
+            await Promise.all(['ro', 'en', 'fr', 'de'].map(loadTranslations));
+            
+            // Set up language buttons
+            document.querySelectorAll('.lang-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    changeLanguage(btn.dataset.lang);
+                });
+            });
+            
+            // Set initial language
+            changeLanguage('ro');
+        }
+
+        // Chat functionality
+        function addMessage(content, sender) {
+            const messagesContainer = document.getElementById('chat-messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+            
+            const time = new Date().toLocaleTimeString(currentLanguage === 'ro' ? 'ro-RO' : 'en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit' 
+            });
+            
+            messageDiv.innerHTML = `
+                <div class="message-content">
+                    ${content.replace(/\n/g, '<br>')}
+                    <div class="message-time">${time}</div>
+                </div>
+            `;
+            
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function showTypingIndicator() {
+            const indicator = document.getElementById('typing-indicator');
+            indicator.textContent = t('typing_indicator', currentLanguage);
+            indicator.classList.add('show');
+            document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight;
+        }
+
+        function hideTypingIndicator() {
+            const indicator = document.getElementById('typing-indicator');
+            indicator.classList.remove('show');
+        }
+
+        async function sendMessage(message = null) {
+            const messageInput = document.getElementById('message-input');
+            const messageText = message || messageInput.value.trim();
+            
+            if (!messageText) return;
+            
+            // Add user message
+            addMessage(messageText, 'user');
+            messageInput.value = '';
+            
+            // Show typing indicator
+            showTypingIndicator();
+            
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: messageText,
+                        sessionId: sessionId,
+                        lang: currentLanguage
+                    })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    hideTypingIndicator();
+                    addMessage(data.reply, 'bot');
+                } else {
+                    hideTypingIndicator();
+                    addMessage(t('error_message', currentLanguage), 'bot');
+                }
+            } catch (error) {
+                console.error('Error sending message:', error);
+                hideTypingIndicator();
+                addMessage(t('connection_error', currentLanguage), 'bot');
+            }
+        }
+
+        // Quick actions with i18n
+        const quickActions = {
+            'greeting': {
+                'ro': 'Salut',
+                'en': 'Hello',
+                'fr': 'Bonjour',
+                'de': 'Hallo'
+            },
+            'booking': {
+                'ro': 'Vreau să mă duc la Viena',
+                'en': 'I want to go to Vienna',
+                'fr': 'Je veux aller à Vienne',
+                'de': 'Ich möchte nach Wien fahren'
+            },
+            'support': {
+                'ro': 'Am o problemă',
+                'en': 'I have a problem',
+                'fr': 'J\'ai un problème',
+                'de': 'Ich habe ein Problem'
+            },
+            'lost-luggage': {
+                'ro': 'Am pierdut bagajele',
+                'en': 'I lost my luggage',
+                'fr': 'J\'ai perdu mes bagages',
+                'de': 'Ich habe mein Gepäck verloren'
+            },
+            'bus-delay': {
+                'ro': 'Autobuzul a întârziat',
+                'en': 'The bus is delayed',
+                'fr': 'Le bus est en retard',
+                'de': 'Der Bus ist verspätet'
+            },
+            'urgent': {
+                'ro': 'Este urgent!',
+                'en': 'This is urgent!',
+                'fr': 'C\'est urgent !',
+                'de': 'Das ist dringend!'
+            }
+        };
+
+        // Set up quick actions
+        document.querySelectorAll('.quick-action').forEach(action => {
+            action.addEventListener('click', () => {
+                const actionType = action.dataset.action;
+                const message = quickActions[actionType][currentLanguage] || quickActions[actionType]['en'];
+                sendMessage(message);
+            });
+        });
+
+        // Set up send button and enter key
+        document.getElementById('send-button').addEventListener('click', () => sendMessage());
+        document.getElementById('message-input').addEventListener('keypress', (event) => {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        // Update session ID display
+        document.getElementById('session-id').textContent = `Session: ${sessionId}`;
+
+        // Initialize everything when page loads
+        document.addEventListener('DOMContentLoaded', async function() {
+            await initLanguage();
+            document.getElementById('message-input').focus();
+            
+            // Add welcome message
+            addMessage(t('welcome_message', currentLanguage), 'bot');
+        });
+    </script>
+</body>
+</html> 

@@ -1,0 +1,29 @@
+[
+  {
+    "route": "Bucharest-Vienna",
+    "departure": "2024-07-10T08:00:00",
+    "arrival": "2024-07-10T20:00:00",
+    "bus_number": "RO1234",
+    "seats_total": 50,
+    "seats_available": 30,
+    "price": 150
+  },
+  {
+    "route": "Bucharest-Budapest",
+    "departure": "2024-07-11T09:00:00",
+    "arrival": "2024-07-11T18:00:00",
+    "bus_number": "RO5678",
+    "seats_total": 50,
+    "seats_available": 45,
+    "price": 100
+  },
+  {
+    "route": "Cluj-Napoca-Vienna",
+    "departure": "2024-07-12T07:00:00",
+    "arrival": "2024-07-12T19:00:00",
+    "bus_number": "CJ4321",
+    "seats_total": 40,
+    "seats_available": 10,
+    "price": 120
+  }
+] 

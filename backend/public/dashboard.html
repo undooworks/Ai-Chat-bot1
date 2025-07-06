@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chatbot - Dashboard Monitorizare</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+        }
+
+        .card h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.3rem;
+        }
+
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .metric-label {
+            font-weight: 500;
+            color: #555;
+        }
+
+        .metric-value {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-ok {
+            background: #28a745;
+        }
+
+        .status-warning {
+            background: #ffc107;
+        }
+
+        .status-error {
+            background: #dc3545;
+        }
+
+        .refresh-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background 0.3s ease;
+        }
+
+        .refresh-btn:hover {
+            background: #5a6fd8;
+        }
+
+        .logs-section {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+
+        .logs-section h3 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .log-entry {
+            padding: 10px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+        }
+
+        .log-error {
+            border-left: 4px solid #dc3545;
+        }
+
+        .log-warning {
+            border-left: 4px solid #ffc107;
+        }
+
+        .log-info {
+            border-left: 4px solid #17a2b8;
+        }
+
+        .loading {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+        }
+
+        @media (max-width: 768px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 AI Chatbot Dashboard</h1>
+            <p>Monitorizare în timp real a sistemului</p>
+        </div>
+
+        <div class="dashboard-grid">
+            <!-- Status Sistem -->
+            <div class="card">
+                <h3>📊 Status Sistem</h3>
+                <div id="system-status">
+                    <div class="loading">Se încarcă...</div>
+                </div>
+            </div>
+
+            <!-- Statistici Generale -->
+            <div class="card">
+                <h3>📈 Statistici Generale</h3>
+                <div id="general-stats">
+                    <div class="loading">Se încarcă...</div>
+                </div>
+            </div>
+
+            <!-- Monitorizare -->
+            <div class="card">
+                <h3>🔍 Monitorizare</h3>
+                <div id="monitor-stats">
+                    <div class="loading">Se încarcă...</div>
+                </div>
+            </div>
+
+            <!-- Agenți AI -->
+            <div class="card">
+                <h3>🤖 Agenți AI</h3>
+                <div id="agents-status">
+                    <div class="loading">Se încarcă...</div>
+                </div>
+            </div>
+        </div>
+
+        <div style="text-align: center; margin-bottom: 20px;">
+            <button class="refresh-btn" onclick="refreshDashboard()">
+                🔄 Actualizează Dashboard
+            </button>
+        </div>
+
+        <!-- Loguri Recente -->
+        <div class="logs-section">
+            <h3>📝 Loguri Recente</h3>
+            <div id="recent-logs">
+                <div class="loading">Se încarcă...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Funcție pentru actualizarea dashboard-ului
+        async function refreshDashboard() {
+            await Promise.all([
+                loadSystemStatus(),
+                loadGeneralStats(),
+                loadMonitorStats(),
+                loadAgentsStatus(),
+                loadRecentLogs()
+            ]);
+        }
+
+        // Încarcă statusul sistemului
+        async function loadSystemStatus() {
+            try {
+                const response = await fetch('/monitor');
+                const data = await response.json();
+                
+                const statusDiv = document.getElementById('system-status');
+                statusDiv.innerHTML = `
+                    <div class="metric">
+                        <span class="metric-label">Status:</span>
+                        <span class="metric-value">
+                            <span class="status-indicator ${data.status === 'ok' ? 'status-ok' : 'status-error'}"></span>
+                            ${data.status === 'ok' ? 'Operațional' : 'Problemă'}
+                        </span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Ultima verificare:</span>
+                        <span class="metric-value">${new Date().toLocaleTimeString()}</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Fallback Count:</span>
+                        <span class="metric-value">${data.fallbackCount || 0}</span>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('system-status').innerHTML = `
+                    <div class="metric">
+                        <span class="metric-label">Status:</span>
+                        <span class="metric-value">
+                            <span class="status-indicator status-error"></span>
+                            Eroare de conexiune
+                        </span>
+                    </div>
+                `;
+            }
+        }
+
+        // Încarcă statisticile generale
+        async function loadGeneralStats() {
+            try {
+                const response = await fetch('/stats');
+                const data = await response.json();
+                
+                const statsDiv = document.getElementById('general-stats');
+                statsDiv.innerHTML = `
+                    <div class="metric">
+                        <span class="metric-label">Sesiuni Totale:</span>
+                        <span class="metric-value">${data.total_sessions || 0}</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Conversații:</span>
+                        <span class="metric-value">${data.total_conversations || 0}</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Rezervări:</span>
+                        <span class="metric-value">${data.total_bookings || 0}</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Sesiuni Suport:</span>
+                        <span class="metric-value">${data.support_sessions || 0}</span>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('general-stats').innerHTML = `
+                    <div class="metric">
+                        <span class="metric-label">Eroare:</span>
+                        <span class="metric-value">Nu se pot încărca</span>
+                    </div>
+                `;
+            }
+        }
+
+        // Încarcă statisticile de monitorizare
+        async function loadMonitorStats() {
+            try {
+                const response = await fetch('/monitor');
+                const data = await response.json();
+                
+                const monitorDiv = document.getElementById('monitor-stats');
+                const escalationStats = data.escalationStats || {};
+                
+                monitorDiv.innerHTML = `
+                    <div class="metric">
+                        <span class="metric-label">Sesiuni Totale:</span>
+                        <span class="metric-value">${escalationStats.totalSessions || 0}</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Escaladări:</span>
+                        <span class="metric-value">${escalationStats.escalatedSessions || 0}</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Rate Escaladare:</span>
+                        <span class="metric-value">${escalationStats.escalationRate || '0%'}</span>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('monitor-stats').innerHTML = `
+                    <div class="metric">
+                        <span class="metric-label">Eroare:</span>
+                        <span class="metric-value">Nu se pot încărca</span>
+                    </div>
+                `;
+            }
+        }
+
+        // Încarcă statusul agenților
+        async function loadAgentsStatus() {
+            const agentsDiv = document.getElementById('agents-status');
+            agentsDiv.innerHTML = `
+                <div class="metric">
+                    <span class="metric-label">GreetingAgent:</span>
+                    <span class="metric-value">
+                        <span class="status-indicator status-ok"></span>
+                        Activ
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">BookingAgent:</span>
+                    <span class="metric-value">
+                        <span class="status-indicator status-ok"></span>
+                        Activ
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">SupportAgent:</span>
+                    <span class="metric-value">
+                        <span class="status-indicator status-ok"></span>
+                        Activ
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">FallbackAgent:</span>
+                    <span class="metric-value">
+                        <span class="status-indicator status-ok"></span>
+                        Activ
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">MonitoringAgent:</span>
+                    <span class="metric-value">
+                        <span class="status-indicator status-ok"></span>
+                        Activ
+                    </span>
+                </div>
+            `;
+        }
+
+        // Încarcă logurile recente
+        async function loadRecentLogs() {
+            try {
+                const response = await fetch('/logs/error?limit=5');
+                const data = await response.json();
+                
+                const logsDiv = document.getElementById('recent-logs');
+                if (data.logs && data.logs.length > 0) {
+                    logsDiv.innerHTML = data.logs.map(log => `
+                        <div class="log-entry log-error">
+                            <strong>${new Date(log.timestamp).toLocaleString()}</strong><br>
+                            ${log.message}
+                        </div>
+                    `).join('');
+                } else {
+                    logsDiv.innerHTML = `
+                        <div class="log-entry log-info">
+                            Nu există erori recente. Sistemul funcționează normal.
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                document.getElementById('recent-logs').innerHTML = `
+                    <div class="log-entry log-warning">
+                        Nu se pot încărca logurile: ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        // Actualizează dashboard-ul la încărcarea paginii
+        document.addEventListener('DOMContentLoaded', refreshDashboard);
+
+        // Actualizează automat la fiecare 30 de secunde
+        setInterval(refreshDashboard, 30000);
+    </script>
+</body>
+</html> 
