@@ -178,11 +178,11 @@
         </div>
 
         <div class="dashboard-grid">
-            <!-- Status Sistem -->
+            <!-- Status Agenți -->
             <div class="card">
-                <h3>📊 Status Sistem</h3>
-                <div id="system-status">
-                    <div class="loading">Se încarcă...</div>
+                <h3>🟢 Status Agenți</h3>
+                <div id="agents-status">
+                    <div class="loading">Se încarcă statusul agenților...</div>
                 </div>
             </div>
 
@@ -194,38 +194,47 @@
                 </div>
             </div>
 
-            <!-- Monitorizare -->
+            <!-- Session ID Generator -->
             <div class="card">
-                <h3>🔍 Monitorizare</h3>
-                <div id="monitor-stats">
-                    <div class="loading">Se încarcă...</div>
+                <h3>🆔 Session ID Generator</h3>
+                <div id="session-generator">
+                    <div class="metric">
+                        <span class="metric-label">Session ID:</span>
+                        <span class="metric-value" id="current-session-id">test123</span>
+                    </div>
+                    <button class="refresh-btn" onclick="generateNewSession()">Generate New Session</button>
                 </div>
             </div>
 
-            <!-- Agenți AI -->
+            <!-- Monitorizare Live -->
             <div class="card">
-                <h3>🤖 Agenți AI</h3>
-                <div id="agents-status">
-                    <div class="loading">Se încarcă...</div>
+                <h3>🔍 Monitorizare Live</h3>
+                <div id="monitor-live">
+                    <div class="loading">Se încarcă datele live...</div>
+                </div>
+            </div>
+
+            <!-- Control Sesiuni -->
+            <div class="card">
+                <h3>🛠️ Control Sesiuni</h3>
+                <div id="session-control">
+                    <div class="loading">Se încarcă sesiuni...</div>
                 </div>
             </div>
         </div>
 
-        <div style="text-align: center; margin-bottom: 20px;">
-            <button class="refresh-btn" onclick="refreshDashboard()">
-                🔄 Actualizează Dashboard
-            </button>
-        </div>
-
-        <!-- Loguri Recente -->
+        <!-- Loguri conversații -->
         <div class="logs-section">
-            <h3>📝 Loguri Recente</h3>
-            <div id="recent-logs">
-                <div class="loading">Se încarcă...</div>
+            <h3>📝 Loguri conversații</h3>
+            <div id="logs-list">
+                <div class="loading">Se încarcă logurile...</div>
             </div>
         </div>
     </div>
 
+    <div id="session-id-info" style="position:fixed;bottom:10px;right:10px;background:#222;color:#fff;padding:8px 16px;border-radius:8px;font-size:14px;z-index:1000;opacity:0.85;">
+  Session ID: <span id="session-id-value">(necunoscut)</span>
+</div>
     <script>
         // Funcție pentru actualizarea dashboard-ului
         async function refreshDashboard() {
@@ -420,6 +429,85 @@
 
         // Actualizează automat la fiecare 30 de secunde
         setInterval(refreshDashboard, 30000);
+
+        // Funcție pentru generarea unui nou session ID
+        function generateNewSession() {
+            const newSessionId = 'web_' + Math.random().toString(36).substring(2, 12);
+            document.getElementById('current-session-id').textContent = newSessionId;
+            localStorage.setItem('sessionId', newSessionId);
+            window.sessionId = newSessionId;
+            
+            // Actualizează și în chat dacă există
+            if (window.chatSessionId) {
+                window.chatSessionId = newSessionId;
+            }
+            
+            console.log('New session ID generated:', newSessionId);
+        }
+
+        // Încarcă AI system status
+        async function loadAIStatus() {
+            try {
+                const response = await fetch('/api/debug/ai-status');
+                const data = await response.json();
+                
+                const aiStatsDiv = document.getElementById('ai-stats');
+                if (aiStatsDiv) {
+                    aiStatsDiv.innerHTML = `
+                        <div class="metric">
+                            <span class="metric-label">LLM Model:</span>
+                            <span class="metric-value">${data.ai?.llmModel || 'N/A'}</span>
+                        </div>
+                        <div class="metric-label">Provider:</span>
+                            <span class="metric-value">${data.ai?.provider || 'N/A'}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">LangGraph:</span>
+                            <span class="metric-value">
+                                <span class="status-indicator ${data.ai?.graphActive ? 'status-ok' : 'status-warning'}"></span>
+                                ${data.ai?.graphActive ? 'Active' : 'Fallback'}
+                            </span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Memory System:</span>
+                            <span class="metric-value">${data.memory?.redis ? 'Redis + SQLite' : 'SQLite Only'}</span>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading AI status:', error);
+            }
+        }
+
+        // Adaugă AI status la refresh
+        const originalRefreshDashboard = refreshDashboard;
+        refreshDashboard = function() {
+            originalRefreshDashboard();
+            loadAIStatus();
+        };
     </script>
+    <script>
+        // Inițializează session ID la încărcarea paginii
+        let sessionId = window.sessionId || localStorage.getItem('sessionId') || '';
+        if (!sessionId) {
+            sessionId = 'web_' + Math.random().toString(36).substring(2, 12);
+            localStorage.setItem('sessionId', sessionId);
+        }
+        document.getElementById('current-session-id').textContent = sessionId;
+        window.sessionId = sessionId;
+    </script>
+    <button id="close-conversation-btn">Închide conversația</button>
+    <script>
+document.getElementById('close-conversation-btn').onclick = function() {
+  const sessionId = window.currentSessionId || 'default-session';
+  fetch('/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: 'close', sessionId, conversationClosed: true })
+  })
+  .then(res => res.json())
+  .then(data => alert(data.reply || 'Conversația a fost încheiată.'));
+};
+</script>
 </body>
 </html> 

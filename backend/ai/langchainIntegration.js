@@ -1,4 +1,4 @@
-import { simpleAgentOrchestrator } from './simpleAgentOrchestrator.js';
+import { agentOrchestrator } from './agentOrchestrator.js';
 
 /**
  * LangChain Integration Layer
@@ -10,9 +10,10 @@ import { simpleAgentOrchestrator } from './simpleAgentOrchestrator.js';
 
 class LangChainIntegration {
   constructor() {
-    this.orchestrator = simpleAgentOrchestrator;
+    this.orchestrator = agentOrchestrator;
     this.isInitialized = false;
     this.initialize();
+    console.log('[LangChain] Forțat orchestratorul cu persistență: agentOrchestrator');
   }
 
   /**
@@ -39,7 +40,9 @@ class LangChainIntegration {
     }
 
     try {
+      console.log(`[DEBUG][LCI] Trimit către orchestrator: ${this.orchestrator.constructor.name} pentru sesiune ${sessionId}`);
       const result = await this.orchestrator.processMessage(message, sessionId, language);
+      console.log(`[DEBUG][LCI] Răspuns orchestrator (${this.orchestrator.constructor.name}):`, result);
       return {
         success: true,
         reply: result.reply,

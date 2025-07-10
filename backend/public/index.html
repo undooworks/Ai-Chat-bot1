@@ -12,12 +12,14 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--background-color);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow: hidden;
+            /* Adaug scalare globală pentru zoom */
+            transform: scale(0.95);
+            transform-origin: top left;
         }
 
         .chat-container {
@@ -176,6 +178,17 @@
             border-bottom: 1px solid #e1e5e9;
             font-size: 12px;
             color: #1976d2;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .session-id {
+            font-weight: bold;
+            font-family: monospace;
+            background: rgba(25, 118, 210, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
         }
 
         .quick-actions {
@@ -218,6 +231,15 @@
             display: block;
         }
 
+        .chat-input-container {
+            padding: 1.5rem 2rem;
+            background: var(--surface-color);
+            border-top: 1px solid var(--border-color);
+            position: sticky;
+            bottom: 0;
+            z-index: 100;
+        }
+        
         @media (max-width: 768px) {
             .chat-container {
                 width: 95%;
@@ -244,7 +266,11 @@
         </div>
         
         <div class="session-info">
-            <span id="session-id">Session: test-</span> | 
+            <div>
+                <span>Session ID: <span class="session-id" id="sessionId">test-</span></span>
+                <button id="copy-session" title="Copy sessionId" style="margin-left:8px;cursor:pointer;">📋</button>
+                <button id="new-chat" title="Start new chat" style="margin-left:8px;cursor:pointer;">🆕 New Chat</button>
+            </div>
             <span id="current-language">Language: RO</span>
         </div>
         
@@ -266,8 +292,9 @@
         </div>
         
         <div class="chat-input">
-            <input type="text" id="message-input" placeholder="Type your message..." />
+            <input type="text" id="message-input" placeholder="Type your message..." autocomplete="off" />
             <button id="send-button">Send</button>
+            <button id="demo-button" title="Inserează mesaj demo" style="margin-left:4px;">Demo</button>
         </div>
     </div>
 
@@ -276,6 +303,12 @@
         let currentLanguage = 'ro';
         let translations = {};
         let sessionId = 'test-' + Math.random().toString(36).substr(2, 9);
+        function updateSessionDisplay() {
+            if (!sessionId || sessionId === '-') {
+                sessionId = 'test-' + Math.random().toString(36).substr(2, 9);
+            }
+            document.getElementById('sessionId').textContent = sessionId;
+        }
 
         // Load translations for a language
         async function loadTranslations(lang) {
@@ -468,15 +501,30 @@
         });
 
         // Set up send button and enter key
+        document.getElementById('copy-session').addEventListener('click', () => {
+            navigator.clipboard.writeText(sessionId);
+        });
+        document.getElementById('new-chat').addEventListener('click', () => {
+            sessionId = 'test-' + Math.random().toString(36).substr(2, 9);
+            updateSessionDisplay();
+            document.getElementById('chat-messages').innerHTML = '';
+            document.getElementById('message-input').value = '';
+            document.getElementById('message-input').focus();
+        });
+        document.getElementById('demo-button').addEventListener('click', () => {
+            document.getElementById('message-input').value = 'Test message for demo';
+            document.getElementById('message-input').focus();
+        });
         document.getElementById('send-button').addEventListener('click', () => sendMessage());
-        document.getElementById('message-input').addEventListener('keypress', (event) => {
-            if (event.key === 'Enter') {
+        document.getElementById('message-input').addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
                 sendMessage();
             }
         });
 
         // Update session ID display
-        document.getElementById('session-id').textContent = `Session: ${sessionId}`;
+        updateSessionDisplay();
 
         // Initialize everything when page loads
         document.addEventListener('DOMContentLoaded', async function() {

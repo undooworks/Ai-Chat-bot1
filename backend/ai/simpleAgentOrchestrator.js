@@ -3,6 +3,7 @@ import { ChatGroq } from "@langchain/groq";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { RunnableSequence } from "@langchain/core/runnables";
 import { StringOutputParser } from "@langchain/core/output_parsers";
+import { getUserContext, setUserContext } from './userMemory.js';
 
 /**
  * Simple Agent Orchestrator (without LangGraph)
@@ -160,11 +161,22 @@ Be helpful and professional.
     try {
       console.log(`[AI] Processing message for session ${sessionId}:`, message);
 
+      // === PERSISTENT MEMORY LOAD ===
+      let context = await getUserContext(sessionId);
+      if (!context.history) context.history = [];
+
       // Check if agents are available
       if (!this.llm || !this.agents.router) {
         console.log("[AI] Agents not available, using fallback response");
+        // Salvează fallback în context
+        context.history.push({ timestamp: Date.now(), role: 'user', message });
+        const fallbackReply = this.getFallbackResponse(message, language);
+        context.history.push({ timestamp: Date.now(), role: 'agent', message: fallbackReply });
+        context.lastAgent = "fallback";
+        await setUserContext(sessionId, context);
+        console.log(`[MEMORY][SET] userId=${sessionId} context=`, context);
         return {
-          reply: this.getFallbackResponse(message, language),
+          reply: fallbackReply,
           agent: "fallback",
           language: language || "ro",
           sessionId,
@@ -193,6 +205,13 @@ Be helpful and professional.
 
       console.log(`[AI] Response from ${cleanAgentType} agent:`, response);
 
+      // === PERSISTENT MEMORY UPDATE ===
+      context.history.push({ timestamp: Date.now(), role: 'user', message });
+      context.history.push({ timestamp: Date.now(), role: 'agent', message: response });
+      context.lastAgent = cleanAgentType;
+      await setUserContext(sessionId, context);
+      console.log(`[MEMORY][SET] userId=${sessionId} context=`, context);
+
       return {
         reply: response,
         agent: cleanAgentType,
@@ -203,7 +222,14 @@ Be helpful and professional.
 
     } catch (error) {
       console.error("[AI] Error processing message:", error);
-      
+      let context = await getUserContext(sessionId);
+      if (!context.history) context.history = [];
+      context.history.push({ timestamp: Date.now(), role: 'user', message });
+      const fallbackReply = this.getFallbackResponse(message, language);
+      context.history.push({ timestamp: Date.now(), role: 'agent', message: fallbackReply });
+      context.lastAgent = "fallback";
+      await setUserContext(sessionId, context);
+      console.log(`[MEMORY][SET][ERROR] userId=${sessionId} context=`, context);
       return {
         reply: this.getFallbackResponse(message, language),
         agent: "fallback",

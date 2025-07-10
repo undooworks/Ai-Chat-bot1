@@ -16,9 +16,30 @@ import { t, detectLanguage, getSupportedLanguages, isValidLanguage } from './uti
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { spawn } from 'child_process';
+import os from 'os';
+import net from 'net';
+import { agentOrchestrator } from './ai/agentOrchestrator.js';
+import { userMemorySystem } from './ai/userMemory.js';
+import HumanFallbackSystem from './ai/humanFallback.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Pornește Redis automat pe Windows dacă nu e deja activ
+if (os.platform() === 'win32') {
+  const redisPath = 'C:/Users/Andu/Desktop/Chatbot/redis/redis-server.exe';
+  const client = new net.Socket();
+  client.connect(6379, '127.0.0.1', function() {
+    client.destroy(); // Redis e deja pornit
+  });
+  client.on('error', function() {
+    // Redis nu e pornit, îl pornim
+    const redisProc = spawn(redisPath, [], { detached: true, stdio: 'ignore' });
+    redisProc.unref();
+    console.log('Redis server started automat din app.');
+  });
+}
 
 const app = express();
 app.use(express.json());
@@ -39,6 +60,31 @@ app.get('/dashboard', (req, res) => {
 let bookingAgent, supportAgent, fallbackAgent, monitorAgent, greetingAgent;
 let telegramBot;
 const sessionState = {};
+
+// Initialize human fallback system
+const humanFallbackSystem = new HumanFallbackSystem({
+    telegram: {
+        token: process.env.TELEGRAM_BOT_TOKEN,
+        agentChatIds: process.env.TELEGRAM_AGENT_CHAT_IDS?.split(',') || []
+    },
+    whatsapp: {
+        apiKey: process.env.WHATSAPP_API_KEY
+    },
+    email: {
+        host: process.env.EMAIL_HOST,
+        port: process.env.EMAIL_PORT,
+        secure: process.env.EMAIL_SECURE === 'true',
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+        from: process.env.EMAIL_FROM,
+        agentEmails: process.env.EMAIL_AGENT_EMAILS?.split(',') || []
+    },
+    webhook: {
+        port: process.env.WEBHOOK_PORT || 3002
+    },
+    escalationThreshold: 3,
+    autoEscalate: true
+});
 
 // Inițializează baza de date
 async function initializeDatabase() {
@@ -62,6 +108,33 @@ async function initializeTelegramBot() {
     // Continuă fără botul Telegram pentru compatibilitate
   }
 }
+
+// Inițializează orchestratorul și pornește serverul doar după ce totul e gata
+async function startServer() {
+  try {
+    console.log('[STARTUP] Initializing AI system...');
+    await userMemorySystem.init();
+    await agentOrchestrator.init();
+    await initializeDatabase();
+    await initializeTelegramBot();
+    
+    // Initialize human fallback system
+    await humanFallbackSystem.init();
+
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`📊 AI System Status: ${agentOrchestrator.getStats().graphActive ? 'LangGraph Active' : 'Direct Routing'}`);
+      console.log(`💾 Memory System: ${userMemorySystem.useRedis ? 'Redis + SQLite' : 'SQLite Only'}`);
+      console.log(`👥 Human Fallback: ${humanFallbackSystem.getStatus().availableAgents} agents available`);
+    });
+  } catch (error) {
+    console.error('[STARTUP] Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
 
 function getBookingAgent() {
   if (!bookingAgent) bookingAgent = new BookingAgent();
@@ -89,7 +162,6 @@ app.post('/chat', async (req, res) => {
   const { message, sessionId = 'default', lang } = req.body;
   if (!message) return res.status(400).json({ error: 'Message required' });
 
-  // 1. Pre-procesare
   let userLanguage = lang;
   if (!userLanguage || !isValidLanguage(userLanguage)) {
     userLanguage = detectLanguage(message);
@@ -97,112 +169,15 @@ app.post('/chat', async (req, res) => {
   logRequest({ sessionId, message, lang: userLanguage });
 
   try {
-    // 2. LangChain AI Orchestration (NEW)
-    console.log('[AI] Processing with LangChain orchestrator...');
-    const aiResult = await langChainIntegration.processMessage(message, sessionId, userLanguage);
-    
-    if (aiResult.success) {
-      console.log(`[AI] LangChain response from ${aiResult.agent} agent:`, aiResult.reply);
-      
-      // 3. Persistență
-      database.saveSession(sessionId, aiResult.agent, 'active', { 
-        language: aiResult.language,
-        confidence: aiResult.confidence,
-        orchestrator: 'langchain'
-      });
-      database.saveConversation(sessionId, aiResult.agent, message, aiResult.reply);
-      
-      // 4. Escaladare dacă e necesar
-      if (shouldEscalate(sessionId, message, aiResult.reply)) {
-        sendTelegramAlert(sessionId, message, { 
-          agent: aiResult.agent, 
-          reply: aiResult.reply,
-          confidence: aiResult.confidence 
-        });
-      }
-      
-      // 5. Log chat conversation
-      chatLogger.logChat(sessionId, message, aiResult.reply, aiResult.agent, aiResult.language);
-      
-      // 6. Returnezi răspunsul AI
-      res.json({ 
-        reply: aiResult.reply, 
-        language: aiResult.language,
-        agent: aiResult.agent,
-        confidence: aiResult.confidence,
-        metadata: aiResult.metadata
-      });
-    } else {
-      // Fallback la sistemul vechi dacă LangChain eșuează
-      console.log('[AI] LangChain failed, using legacy system...');
-      const msg = message.toLowerCase();
-      let reply = '', agent = '', isFallback = false;
-      
-      if (isGreeting(msg)) {
-        console.log('[ROUTING] GreetingAgent (legacy)');
-        const greetingAgent = getGreetingAgent();
-        reply = await greetingAgent.handleMessage(message, sessionId, userLanguage);
-        agent = 'GreetingAgent';
-        if (reply === null) {
-          console.log('[ROUTING] GreetingAgent returned null, continue to FallbackAgent');
-          const fallbackAgent = getFallbackAgent();
-          try {
-            reply = await fallbackAgent.handleMessage(message, { sessionId, lang: userLanguage });
-            agent = 'FallbackAgent';
-            isFallback = true;
-          } catch (err) {
-            logError(err);
-            reply = getGenericFallbackReply(userLanguage);
-            agent = 'FallbackAgent';
-            isFallback = true;
-          }
-        }
-      } else if (isBooking(msg)) {
-        console.log('[ROUTING] BookingAgent (legacy)');
-        const bookingAgent = getBookingAgent();
-        reply = await bookingAgent.handleMessage(message, sessionId);
-        agent = 'BookingAgent';
-      } else if (isSupport(msg)) {
-        console.log('[ROUTING] SupportAgent (legacy)');
-        const supportAgent = getSupportAgent();
-        reply = await supportAgent.handleMessage(message, sessionId);
-        agent = 'SupportAgent';
-      } else {
-        console.log('[ROUTING] FallbackAgent (legacy)');
-        const fallbackAgent = getFallbackAgent();
-        try {
-          reply = await fallbackAgent.handleMessage(message, { sessionId, lang: userLanguage });
-          agent = 'FallbackAgent';
-          isFallback = true;
-        } catch (err) {
-          logError(err);
-          reply = getGenericFallbackReply(userLanguage);
-          agent = 'FallbackAgent';
-          isFallback = true;
-        }
-      }
-      
-      // Persistență pentru sistemul legacy
-      database.saveSession(sessionId, agent, 'active', { 
-        language: userLanguage,
-        orchestrator: 'legacy'
-      });
-      database.saveConversation(sessionId, agent, message, reply);
-      
-      if (shouldEscalate(sessionId, message, reply)) {
-        sendTelegramAlert(sessionId, message, { agent, reply });
-      }
-      
-      // Log chat conversation for legacy system
-      chatLogger.logChat(sessionId, message, reply, agent, userLanguage);
-      
-      res.json({ 
-        reply, 
-        language: userLanguage,
-        agent,
-        orchestrator: 'legacy'
-      });
-    }
+    // Folosește direct orchestratorul cu persistență
+    const aiResult = await agentOrchestrator.processMessage(message, sessionId, userLanguage);
+    res.json({
+      reply: aiResult.reply,
+      language: aiResult.language,
+      agent: aiResult.agent,
+      sessionId,
+      error: aiResult.error || false
+    });
   } catch (error) {
     logError(error);
     chatLogger.logError(sessionId, message, error);
@@ -261,6 +236,137 @@ app.post('/bookings', async (req, res) => {
   } catch (error) {
     console.error('Error making booking:', error);
     res.status(500).json({ error: 'Failed to make booking' });
+  }
+});
+
+// Debug endpoint pentru user context
+app.get('/api/debug/user-context/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    console.log(`[DEBUG] Getting user context for session: ${sessionId}`);
+    
+    const context = await userMemorySystem.getUserContext(sessionId);
+    const history = await userMemorySystem.getConversationHistory(sessionId, 10);
+    const preferences = await userMemorySystem.getUserPreferences(sessionId);
+    const bookings = await userMemorySystem.getBookingHistory(sessionId);
+    const stats = await userMemorySystem.getStats();
+    
+    res.json({
+      sessionId,
+      context,
+      history,
+      preferences,
+      bookings,
+      memoryStats: stats,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('[DEBUG] Error getting user context:', error);
+    res.status(500).json({ 
+      error: 'Failed to get user context',
+      details: error.message,
+      sessionId: req.params.sessionId
+    });
+  }
+});
+
+// Debug endpoint pentru AI system status
+app.get('/api/debug/ai-status', async (req, res) => {
+  try {
+    const aiStats = agentOrchestrator.getStats();
+    const memoryStats = await userMemorySystem.getStats();
+    
+    res.json({
+      ai: aiStats,
+      memory: memoryStats,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('[DEBUG] Error getting AI status:', error);
+    res.status(500).json({ 
+      error: 'Failed to get AI status',
+      details: error.message
+    });
+  }
+});
+
+// Debug endpoint pentru router agent
+app.post('/api/debug/router', async (req, res) => {
+  try {
+    const { message, lang = 'ro' } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+    
+    const routerResult = await agentOrchestrator.routerAgent.invoke({
+      message,
+      language: lang
+    });
+    
+    res.json({
+      message,
+      routerDecision: routerResult,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('[DEBUG] Router error:', error);
+    res.status(500).json({ 
+      error: 'Router failed',
+      details: error.message
+    });
+  }
+});
+
+// Debug endpoint pentru agent test
+app.post('/api/debug/agent/:agentName', async (req, res) => {
+  try {
+    const { agentName } = req.params;
+    const { message, lang = 'ro' } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+    
+    let agent;
+    switch (agentName) {
+      case 'greeting':
+        agent = agentOrchestrator.greetingAgent;
+        break;
+      case 'booking':
+        agent = agentOrchestrator.bookingAgent;
+        break;
+      case 'support':
+        agent = agentOrchestrator.supportAgent;
+        break;
+      case 'fallback':
+        agent = agentOrchestrator.fallbackAgent;
+        break;
+      default:
+        return res.status(400).json({ error: 'Invalid agent name' });
+    }
+    
+    if (!agent) {
+      return res.status(500).json({ error: 'Agent not available' });
+    }
+    
+    const result = await agent.invoke({
+      message,
+      language: lang
+    });
+    
+    res.json({
+      agent: agentName,
+      message,
+      result,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error(`[DEBUG] ${req.params.agentName} agent error:`, error);
+    res.status(500).json({ 
+      error: 'Agent failed',
+      details: error.message
+    });
   }
 });
 
@@ -655,6 +761,109 @@ app.get('/api/email/status', (req, res) => {
   // res.json(emailService.getStatus());
 });
 
+// Widget endpoints
+app.get('/widget', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'widget.html'));
+});
+
+app.get('/widget.js', (req, res) => {
+    res.setHeader('Content-Type', 'application/javascript');
+    res.sendFile(path.join(__dirname, 'public', 'widget.js'));
+});
+
+// Widget API endpoints
+app.post('/api/widget/chat', async (req, res) => {
+    const { message, sessionId, lang = 'en' } = req.body;
+    
+    if (!message) {
+        return res.status(400).json({ error: 'Message required' });
+    }
+
+    try {
+        // Process message through AI
+        const aiResult = await agentOrchestrator.processMessage(message, sessionId, lang);
+        
+        // Check if escalation is needed
+        const escalationCheck = humanFallbackSystem.shouldEscalate(
+            sessionId, 
+            message, 
+            aiResult.reply, 
+            { language: lang, sessionId }
+        );
+
+        if (escalationCheck.escalate) {
+            // Escalate to human
+            const escalation = await humanFallbackSystem.escalateToHuman(
+                sessionId, 
+                message, 
+                { language: lang, sessionId }, 
+                escalationCheck.reason
+            );
+
+            res.json({
+                reply: escalation.immediateResponse,
+                escalation: {
+                    id: escalation.escalationId,
+                    estimatedWait: escalation.estimatedWaitTime,
+                    status: 'pending'
+                },
+                language: lang,
+                sessionId,
+                error: false
+            });
+        } else {
+            // Return AI response
+            res.json({
+                reply: aiResult.reply,
+                language: aiResult.language,
+                agent: aiResult.agent,
+                sessionId,
+                error: aiResult.error || false
+            });
+        }
+    } catch (error) {
+        console.error('[WIDGET] Error:', error);
+        res.status(500).json({ 
+            error: 'Internal server error',
+            reply: 'Sorry, I\'m having trouble. Please try again.'
+        });
+    }
+});
+
+// Human agent endpoints
+app.post('/api/human/available', async (req, res) => {
+    try {
+        const { agentId, name, skills, availability } = req.body;
+        
+        // This would be called when a human agent becomes available
+        // For now, we'll just acknowledge it
+        res.json({ success: true, message: 'Agent availability updated' });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to update agent availability' });
+    }
+});
+
+app.post('/api/human/message', async (req, res) => {
+    try {
+        const { sessionId, message, agentId, channel } = req.body;
+        
+        const result = await humanFallbackSystem.handleHumanAgentMessage(
+            channel || 'api',
+            agentId,
+            message
+        );
+
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to send message' });
+    }
+});
+
+// Human fallback status
+app.get('/api/human/status', (req, res) => {
+    res.json(humanFallbackSystem.getStatus());
+});
+
 // === FUNCȚII UTILE FLUX INDUSTRIAL ===
 function isGreeting(msg) {
   return /^(salut|buna|hello|bonjour|hallo|hi|hey)[!., ]*$/i.test(msg.trim());
@@ -692,26 +901,13 @@ function sendTelegramAlert(sessionId, message, context) {
   console.log(`[ESCALATION] Session ${sessionId} escalated! Message: ${message} | Context: ${JSON.stringify(context)}`);
 }
 
-const PORT = process.env.PORT || 3000;
-
-// Inițializează baza de date și botul Telegram înainte de a porni serverul
-async function initializeServices() {
+// Endpoint de debug pentru context user
+app.get('/api/debug/user-context/:sessionId', async (req, res) => {
   try {
-    await initializeDatabase();
-    await initializeTelegramBot();
-    
-    app.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT}`);
-      console.log(`📱 Telegram bot: ${telegramBot ? 'Active' : 'Not configured'}`);
-      console.log(`💾 Database: ${database.db ? 'Connected' : 'Not available'}`);
-    });
+    const { sessionId } = req.params;
+    const context = await userMemorySystem.getUserContext(sessionId);
+    res.json({ context });
   } catch (error) {
-    console.error('Failed to start services:', error);
-    // Pornește serverul fără serviciile opționale pentru compatibilitate
-    app.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT} (limited functionality)`);
-    });
+    res.status(500).json({ error: 'Failed to get user context', details: error.message });
   }
-}
-
-initializeServices(); 
+}); 

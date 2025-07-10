@@ -160,6 +160,34 @@ class TelegramBot {
       await ctx.reply(infoMessage);
     });
 
+    // Handler pentru comanda /admin
+    this.bot.command('admin', async (ctx) => {
+      const userId = ctx.from.id.toString();
+      const userLanguage = detectLanguage(ctx.message?.text || '');
+      // Logare acces admin
+      console.log(`[ADMIN] Acces admin de la user ${userId}`);
+      await ctx.reply('🔒 Acces admin: dashboard-ul este disponibil doar din interfața web.');
+    });
+
+    // Handler pentru comanda /stats
+    this.bot.command('stats', async (ctx) => {
+      const userId = ctx.from.id.toString();
+      const userLanguage = detectLanguage(ctx.message?.text || '');
+      // Logare acces stats
+      console.log(`[ADMIN] Stats request de la user ${userId}`);
+      // Exemplu sumar statistici (de extins cu date reale)
+      await ctx.reply('📊 Statistici: Număr sesiuni, fallback rate, utilizatori activi (de extins).');
+    });
+
+    // Handler pentru comanda /logs
+    this.bot.command('logs', async (ctx) => {
+      const userId = ctx.from.id.toString();
+      const userLanguage = detectLanguage(ctx.message?.text || '');
+      // Logare acces logs
+      console.log(`[ADMIN] Logs request de la user ${userId}`);
+      await ctx.reply('📝 Logurile detaliate sunt disponibile doar din dashboard-ul admin.');
+    });
+
     // Handler pentru erori
     this.bot.catch((err, ctx) => {
       console.error('Telegram bot error:', err);
