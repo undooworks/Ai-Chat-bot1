@@ -819,7 +819,7 @@ class AgentOrchestrator {
       preferences,
       bookingContext,
       supportContext,
-      language: getLanguage(state)
+      language: language || getLanguage(state)
     };
     console.log('[DEBUG][FALLBACK][INPUT]', inputVars);
     if (!this.fallbackAgent) {
