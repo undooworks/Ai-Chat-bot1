@@ -695,7 +695,7 @@ class AgentOrchestrator {
       console.log('[DEBUG][bookingNode][OUT]', JSON.stringify(out));
       return out;
     }
-    if (state.conversationClosed || isSessionTimedOut(context) || detectEndConversationIntent(message, context.history)) {
+    if (state.conversationClosed || isSessionTimedOut(state) || detectEndConversationIntent(message, history)) {
       state.conversationClosed = true;
       return {
         reply: 'Conversația a fost încheiată. Dacă ai nevoie de altceva, reîncepe o sesiune nouă.',
@@ -739,7 +739,7 @@ class AgentOrchestrator {
       console.log('[DEBUG][supportNode][OUT]', JSON.stringify(out));
       return out;
     }
-    if (state.conversationClosed || isSessionTimedOut(context) || detectEndConversationIntent(message, context.history)) {
+    if (state.conversationClosed || isSessionTimedOut(state) || detectEndConversationIntent(message, history)) {
       state.conversationClosed = true;
       return {
         reply: 'Conversația a fost încheiată. Dacă ai nevoie de altceva, reîncepe o sesiune nouă.',
@@ -784,7 +784,7 @@ class AgentOrchestrator {
       console.log('[DEBUG][greetingNode][OUT]', JSON.stringify(out));
       return out;
     }
-    if (state.conversationClosed || isSessionTimedOut(context) || detectEndConversationIntent(message, context.history)) {
+    if (state.conversationClosed || isSessionTimedOut(state) || detectEndConversationIntent(message, history)) {
       state.conversationClosed = true;
       return {
         reply: 'Conversația a fost încheiată. Dacă ai nevoie de altceva, reîncepe o sesiune nouă.',
@@ -828,7 +828,7 @@ class AgentOrchestrator {
       console.log('[DEBUG][fallbackNode][OUT]', JSON.stringify(out));
       return out;
     }
-    if (state.conversationClosed || isSessionTimedOut(context) || detectEndConversationIntent(message, context.history)) {
+    if (state.conversationClosed || isSessionTimedOut(state) || detectEndConversationIntent(message, history)) {
       state.conversationClosed = true;
       return {
         reply: 'Conversația a fost încheiată. Dacă ai nevoie de altceva, reîncepe o sesiune nouă.',
@@ -873,7 +873,7 @@ class AgentOrchestrator {
       console.log('[DEBUG][paymentNode][OUT]', JSON.stringify(out));
       return out;
     }
-    if (state.conversationClosed || isSessionTimedOut(context) || detectEndConversationIntent(message, context.history)) {
+    if (state.conversationClosed || isSessionTimedOut(state) || detectEndConversationIntent(message, history)) {
       state.conversationClosed = true;
       return {
         reply: 'Conversația a fost încheiată. Dacă ai nevoie de altceva, reîncepe o sesiune nouă.',
