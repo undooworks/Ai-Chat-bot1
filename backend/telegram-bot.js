@@ -1,5 +1,4 @@
 import { Telegraf } from 'telegraf';
-import fetch from 'node-fetch';
 import { t, detectLanguage, getSupportedLanguages } from './utils/i18n.js';
 
 class TelegramBot {

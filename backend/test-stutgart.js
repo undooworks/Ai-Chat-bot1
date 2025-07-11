@@ -1,4 +1,4 @@
-import fetch from 'node-fetch';
+
 
 async function testMessage(message, sessionId = 'test-session') {
   try {

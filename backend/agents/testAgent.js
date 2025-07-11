@@ -1,4 +1,4 @@
-import fetch from 'node-fetch';
+
 
 const TEST_MESSAGES = [
   'Cât e biletul până la Viena?',

@@ -1,4 +1,4 @@
-import fetch from 'node-fetch';
+
 
 (async () => {
   console.log('=== TESTING CHAT ENDPOINT ===');
