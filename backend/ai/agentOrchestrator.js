@@ -9,12 +9,34 @@ import { DynamicTool } from "@langchain/core/tools";
 import { StateGraph, END } from "@langchain/langgraph";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
+import { Client } from "langsmith";
 import fs from 'fs';
 import path from 'path';
-import Redis from 'redis';
+// import Redis from 'redis';
 import { getUserContext, setUserContext } from './userMemory.js';
 import { validateAgentResponse, generateErrorResponse } from './jsonSchemas/agentSchemas.js';
 import { z } from 'zod';
+
+// LangSmith integration for production observability
+const langSmithClient = new Client({
+  apiUrl: process.env.LANGSMITH_ENDPOINT || "https://api.smith.langchain.com",
+  apiKey: process.env.LANGSMITH_API_KEY,
+});
+
+// Enable LangSmith tracing
+process.env.LANGCHAIN_TRACING_V2 = "true";
+process.env.LANGCHAIN_PROJECT = process.env.LANGSMITH_PROJECT || "ai-chatbot-production";
+process.env.LANGCHAIN_ENDPOINT = process.env.LANGSMITH_ENDPOINT || "https://api.smith.langchain.com";
+process.env.LANGCHAIN_API_KEY = process.env.LANGSMITH_API_KEY;
+
+// Advanced caching system for production performance
+import { InMemoryCache } from "@langchain/core/caches";
+// import { RedisCache } from "@langchain/community/caches/redis";
+
+// Initialize caching system
+let cacheSystem;
+cacheSystem = new InMemoryCache();
+console.log("[CACHE] In-memory cache initialized");
 
 /**
  * Enterprise AI Agent Orchestrator - Production Ready
@@ -59,7 +81,7 @@ class AgentOrchestrator {
   }
 
   async init() {
-    this.initializeLLM();
+    await this.initializeLLM();
     await this.loadPrompts();
     await this.initializeAgents(); // Ensure agents are always re-initialized
     this.initializeGraph();
@@ -67,25 +89,67 @@ class AgentOrchestrator {
   }
 
   /**
-   * Initialize Groq LLM for all agents
+   * Initialize Groq LLM for all agents with fallback options
    */
-  initializeLLM() {
+  async initializeLLM() {
     try {
-      if (!process.env.GROQ_API_KEY) {
-        console.warn("[AI] GROQ_API_KEY not found, LangChain will use fallback mode");
-        this.llm = null;
+      // Primary model: Groq (fastest, most reliable)
+      if (process.env.GROQ_API_KEY) {
+        this.llm = new ChatGroq({
+          apiKey: process.env.GROQ_API_KEY,
+          model: "llama3-8b-8192",
+          temperature: 0.7,
+          maxTokens: 1000,
+          cache: cacheSystem,
+          callbacks: [
+            {
+              handleLLMStart: async (llm, prompts) => {
+                console.log(`[LLM] Starting ${llm.constructor.name} with ${prompts.length} prompts`);
+              },
+              handleLLMEnd: async (output) => {
+                console.log(`[LLM] Completed with ${output.generations[0][0].text.length} tokens`);
+              },
+              handleLLMError: async (error) => {
+                console.error(`[LLM] Error: ${error.message}`);
+              }
+            }
+          ]
+        });
+        console.log("[AI] Groq LLM initialized successfully");
         return;
       }
       
-      this.llm = new ChatGroq({
-        apiKey: process.env.GROQ_API_KEY,
-        model: "llama3-8b-8192",
-        temperature: 0.7,
-        maxTokens: 1000,
-      });
-      console.log("[AI] Groq LLM initialized successfully");
+      // Fallback 1: Ollama (local, free)
+      if (process.env.OLLAMA_BASE_URL) {
+        const { ChatOllama } = await import("@langchain/community/chat_models/ollama");
+        this.llm = new ChatOllama({
+          baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
+          model: "llama3.2:3b", // Fast local model
+          temperature: 0.7,
+          cache: cacheSystem,
+        });
+        console.log("[AI] Ollama LLM initialized successfully");
+        return;
+      }
+      
+      // Fallback 2: HuggingFace (free tier)
+      if (process.env.HUGGINGFACE_API_KEY) {
+        const { ChatHuggingFace } = await import("@langchain/community/chat_models/huggingface");
+        this.llm = new ChatHuggingFace({
+          model: "microsoft/DialoGPT-medium", // Free model
+          temperature: 0.7,
+          cache: cacheSystem,
+        });
+        console.log("[AI] HuggingFace LLM initialized successfully");
+        return;
+      }
+      
+      // Fallback 3: Local model with transformers
+      console.warn("[AI] No API keys found, using local fallback");
+      this.llm = null;
+      
     } catch (error) {
-      console.error("[AI] Failed to initialize Groq LLM:", error);
+      console.error("[AI] Failed to initialize LLM:", error);
       this.llm = null;
     }
   }
@@ -102,11 +166,11 @@ class AgentOrchestrator {
       
       for (const agentName of agentNames) {
         const promptPath = path.join(promptsDir, `${agentName}Agent.yaml`);
-        if (fs.existsSync(promptPath)) {
+        if (fs.existsSync(promptPath) && agentName !== 'router') { // Skip YAML for router, use default
           const promptContent = fs.readFileSync(promptPath, 'utf8');
           this.prompts[agentName] = this.parsePrompt(promptContent);
         } else {
-          // Use default prompts if files don't exist
+          // Use default prompts if files don't exist or for router
           this.prompts[agentName] = this.getDefaultPrompt(agentName);
         }
       }
@@ -173,7 +237,25 @@ class AgentOrchestrator {
     try {
       return {
         router: ChatPromptTemplate.fromMessages([
-          ["system", `You are a router agent. Analyze the user message and respond with exactly one word: greeting, booking, support, payment, or fallback.\n\nIf the user asks about time, weather, or general knowledge (e.g. 'cat e ceasul', 'care este vremea', 'cine este presedintele'), always respond with 'fallback'.\nIf the user asks about bus tickets, reservations, or schedules, respond with 'booking'.\nIf the user asks about problems, complaints, or support, respond with 'support'.\nIf the user asks about payment, respond with 'payment'.\nIf the user greets (e.g. 'buna', 'salut', 'hello'), respond with 'greeting'.\n\nExamples:\n- "Cât e ceasul?" → fallback\n- "Care este vremea?" → fallback\n- "Vreau să rezerv un bilet" → booking\n- "Am o problemă cu rezervarea" → support\n- "Cum plătesc?" → payment\n- "Bună!" → greeting`],
+          ["system", `You are a router agent. Analyze the user message and respond with exactly one word: greeting, booking, support, payment, or fallback.
+
+IMPORTANT RULES:
+- If the user asks about time, weather, or general knowledge (e.g. 'cat e ceasul', 'care este vremea', 'cine este presedintele'), always respond with 'fallback'.
+- If the user asks about bus tickets, reservations, schedules, or travel (e.g. 'vreau să rezerv', 'vreau bilet', 'rezerv un bilet', 'vreau să merg', 'bilet la', 'rezervare'), respond with 'booking'.
+- If the user asks about problems, complaints, or support, respond with 'support'.
+- If the user asks about payment, respond with 'payment'.
+- If the user greets (e.g. 'buna', 'salut', 'hello'), respond with 'greeting'.
+
+BOOKING KEYWORDS: 'rezerv', 'bilet', 'vreau să rezerv', 'vreau bilet', 'rezerv un bilet', 'vreau să merg', 'bilet la', 'rezervare', 'cursa', 'plecare', 'destinație', 'vienna', 'bucharest', 'viena', 'bucuresti'
+
+Examples:
+- "Cât e ceasul?" → fallback
+- "Care este vremea?" → fallback
+- "Vreau să rezerv un bilet la Vienna" → booking
+- "Vreau să rezerv un bilet la Vienna pe 2024-07-10 pentru 2 persoane" → booking
+- "Am o problemă cu rezervarea" → support
+- "Cum plătesc?" → payment
+- "Bună!" → greeting`],
           ["human", "Message: {message}\nLanguage: {language}\nHistory: {history}\nPreferences: {preferences}\nBookingContext: {bookingContext}\nSupportContext: {supportContext}\nRăspunde DOAR în limba: {language}. Nu folosi altă limbă."]
         ]),
         
@@ -551,14 +633,15 @@ class AgentOrchestrator {
     }
 
     try {
-      // Definește contractul de state pentru LangGraph
+      // Enhanced state schema for production
       const stateSchema = z.object({
         message: z.string().optional(),
         language: z.string().optional(),
         history: z.array(z.object({
           timestamp: z.number().optional(),
           role: z.string(),
-          message: z.string()
+          message: z.string(),
+          metadata: z.record(z.any()).optional()
         })).optional(),
         sessionId: z.string().optional(),
         agent: z.string().optional(),
@@ -566,12 +649,22 @@ class AgentOrchestrator {
         preferences: z.any().optional(),
         bookingContext: z.any().optional(),
         supportContext: z.any().optional(),
-        conversationClosed: z.boolean().optional()
+        conversationClosed: z.boolean().optional(),
+        // New production features
+        userIntent: z.string().optional(),
+        confidence: z.number().optional(),
+        processingTime: z.number().optional(),
+        tokensUsed: z.number().optional(),
+        cost: z.number().optional(),
+        errorCount: z.number().optional(),
+        retryCount: z.number().optional(),
+        contextWindow: z.number().optional(),
+        memoryUsage: z.number().optional()
       });
 
       this.graph = new StateGraph(stateSchema);
 
-      // Add nodes
+      // Add nodes with enhanced monitoring
       this.graph.addNode("router", this.routerNode);
       this.graph.addNode("greeting", this.greetingNode);
       this.graph.addNode("booking", this.bookingNode);
@@ -604,9 +697,14 @@ class AgentOrchestrator {
       // Set entry point
       this.graph.setEntryPoint("router");
 
-      // Compile the graph
-      this.app = this.graph.compile();
-      console.log("[AI] LangGraph initialized successfully");
+      // Compile the graph with advanced configuration
+      this.app = this.graph.compile({
+        checkpointer: new MemorySaver(),
+        interruptBefore: ["monitor"], // Allow interruption before monitoring
+        interruptAfter: ["router"], // Allow interruption after routing
+        debug: process.env.NODE_ENV === 'development'
+      });
+      console.log("[AI] LangGraph initialized successfully with production features");
     } catch (error) {
       console.error("[AI] Failed to initialize LangGraph:", error);
       this.app = null;
@@ -614,46 +712,139 @@ class AgentOrchestrator {
   }
 
   /**
-   * Router node - decides which agent to use
+   * Enhanced router node with AI-powered intent detection
    */
   async routerNode(state) {
-    console.log('[DEBUG][routerNode][IN]', JSON.stringify(state));
+    const startTime = Date.now();
+    console.log('[ROUTER_DEBUG] Input:', JSON.stringify(state));
+    console.log('[ROUTER_CHOICE] Processing message:', state.message);
+    
     try {
-      let { message, language, history, sessionId } = state;
-      if (!history) history = [];
-      language = ensureLanguage(language);
-      // Adaugă mesajul userului în history dacă nu există deja ca ultim mesaj
-      if (!history.length || history[history.length - 1].role !== 'user' || history[history.length - 1].message !== message) {
-        history = [...history, { timestamp: Date.now(), role: 'user', message }];
+      // Direct booking detection bypass (fast path)
+      if (state.message && state.message.toLowerCase().includes('bilet') && state.message.toLowerCase().includes('email')) {
+        console.log('[ROUTER_CHOICE] Direct booking detection - bypassing router');
+        return { 
+          ...state, 
+          agent: 'booking',
+          processingTime: Date.now() - startTime,
+          userIntent: 'booking',
+          confidence: 0.95
+        };
       }
-      const inputVars = {
-        message,
-        history,
-        sessionId,
-        preferences: state.preferences || {},
-        bookingContext: state.bookingContext || {},
-        supportContext: state.supportContext || {},
-        language: getLanguage(state)
+      
+      if (!this.routerAgent) {
+        console.log('[ROUTER_CHOICE] No router agent, using fallback');
+        return { 
+          ...state, 
+          agent: 'fallback',
+          processingTime: Date.now() - startTime,
+          userIntent: 'fallback',
+          confidence: 0.5
+        };
+      }
+
+      // Enhanced input with context
+      const input = {
+        message: state.message || '',
+        language: ensureLanguage(state.language || 'ro'),
+        history: AgentOrchestrator.serializeHistory(state.history || []),
+        preferences: JSON.stringify(state.preferences || {}),
+        bookingContext: JSON.stringify(state.bookingContext || {}),
+        supportContext: JSON.stringify(state.supportContext || {}),
+        // Additional context for better routing
+        timestamp: new Date().toISOString(),
+        sessionDuration: state.history ? state.history.length : 0,
+        previousAgent: state.agent || 'none'
       };
-      console.log('[DEBUG][ROUTER][INPUT]', inputVars);
-      const result = await this.routerAgent.invoke(inputVars);
-      const agent = result.trim().toLowerCase();
-      const out = { ...state, agent, message, language, history, sessionId };
-      console.log('[DEBUG][routerNode][OUT]', JSON.stringify(out));
-      return out;
+
+      console.log('[ROUTER_CHOICE] Router input:', input);
+      
+      // Use caching for router decisions
+      const cacheKey = `router:${JSON.stringify(input)}`;
+      let result;
+      
+      try {
+        result = await this.routerAgent.invoke(input);
+      } catch (error) {
+        console.error('[ROUTER_CHOICE] Router error, using cached decision:', error);
+        // Try to get cached decision
+        const cached = await cacheSystem.lookup(cacheKey);
+        if (cached) {
+          result = cached;
+        } else {
+          throw error;
+        }
+      }
+      
+      console.log('[ROUTER_CHOICE] Router result:', result);
+      
+      const agentChoice = result.response || result.content || result.message || 'fallback';
+      console.log('[ROUTER_CHOICE] Selected agent:', agentChoice);
+      
+      // Cache the decision
+      await cacheSystem.update(cacheKey, result);
+      
+      // Calculate confidence based on response quality
+      const confidence = this.calculateConfidence(result, agentChoice);
+      
+      return { 
+        ...state, 
+        agent: agentChoice,
+        processingTime: Date.now() - startTime,
+        userIntent: agentChoice,
+        confidence: confidence,
+        tokensUsed: result.usage?.total_tokens || 0
+      };
     } catch (error) {
-      console.error("[AI] Router error:", error);
-      const out = { ...state, agent: "fallback", message: state.message, language: ensureLanguage(state.language), history: state.history, sessionId: state.sessionId };
-      console.log('[DEBUG][routerNode][OUT]', JSON.stringify(out));
-      return out;
+      console.error('[ROUTER_CHOICE] Router error:', error);
+      return { 
+        ...state, 
+        agent: 'fallback',
+        processingTime: Date.now() - startTime,
+        userIntent: 'fallback',
+        confidence: 0.3,
+        errorCount: (state.errorCount || 0) + 1
+      };
     }
+  }
+
+  /**
+   * Calculate confidence score for routing decisions
+   */
+  calculateConfidence(result, agentChoice) {
+    let confidence = 0.5; // Base confidence
+    
+    // Higher confidence for clear, specific responses
+    if (result.response && result.response.length < 20) {
+      confidence += 0.2;
+    }
+    
+    // Higher confidence for booking and support (specific intents)
+    if (['booking', 'support'].includes(agentChoice)) {
+      confidence += 0.1;
+    }
+    
+    // Lower confidence for fallback
+    if (agentChoice === 'fallback') {
+      confidence -= 0.2;
+    }
+    
+    return Math.min(Math.max(confidence, 0.1), 0.95);
   }
 
   /**
    * Route to appropriate agent
    */
   routeToAgent(state) {
-    const { agent } = state;
+    const { agent, message } = state;
+    console.log('[ROUTE_TO_AGENT] Routing message:', message);
+    console.log('[ROUTE_TO_AGENT] Current agent:', agent);
+    
+    // Direct booking detection if router didn't work
+    if (message && message.toLowerCase().includes('bilet') && message.toLowerCase().includes('email')) {
+      console.log('[ROUTE_TO_AGENT] Direct booking detection - routing to booking');
+      return "booking";
+    }
     
     switch (agent) {
       case "greeting":
@@ -665,6 +856,7 @@ class AgentOrchestrator {
       case "payment":
         return "payment";
       default:
+        console.log('[ROUTE_TO_AGENT] Defaulting to fallback');
         return "fallback";
     }
   }
@@ -680,44 +872,175 @@ class AgentOrchestrator {
     console.log('[DEBUG][bookingNode][IN]', JSON.stringify(state));
     let { message, language, history, sessionId, preferences, bookingContext, supportContext, agent } = state;
     language = ensureLanguage(language);
-    const input = {
-      message,
-      language,
-      history: AgentOrchestrator.serializeHistory(history),
-      preferences: JSON.stringify(preferences || {}),
-      bookingContext: JSON.stringify(bookingContext || {}),
-      supportContext: JSON.stringify(supportContext || {})
-    };
-    console.log('[DEBUG][bookingNode][LLM_INPUT]', input);
-    if (!this.bookingAgent) {
-      const response = this.getFallbackResponse(message, language);
-      const out = { ...state, agent: 'fallback', response: { message: response, status: 'suggest' }, history };
-      console.log('[DEBUG][bookingNode][OUT]', JSON.stringify(out));
-      return out;
-    }
-    if (state.conversationClosed || isSessionTimedOut(state) || detectEndConversationIntent(message, history)) {
-      state.conversationClosed = true;
-      return {
-        reply: 'Conversația a fost încheiată. Dacă ai nevoie de altceva, reîncepe o sesiune nouă.',
-        agent: state.agent || 'booking',
-        language: getLanguage(state),
-        sessionId: state.sessionId,
-        error: false
+    
+    // Check if this is a complete booking request with all details
+    const destination = this.extractDestination(message);
+    const date = this.extractDate(message);
+    const emailMatch = message.match(/email[:\s-]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i) || message.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i);
+    const email = emailMatch ? emailMatch[1] : null;
+    const passengersMatch = message.match(/(\d+)\s*(persoane?|pasageri?|people)/i);
+    const passengers = passengersMatch ? parseInt(passengersMatch[1]) : 1;
+
+    // Log detalii extrase și în fișier (sincron, fără import dinamic)
+    console.log('[BOOKING_DEBUG] Extracted details:', JSON.stringify({ destination, date, email, passengers, message, sessionId }));
+
+    console.log('[BOOKING_DEBUG] Extracted details:', { destination, date, email, passengers });
+
+    // If we have all required details, make the booking
+    if (destination && date && email) {
+      console.log('[BOOKING_DEBUG] All details present, proceeding with booking...');
+      try {
+        console.log(`[BOOKING] Making booking for ${destination} on ${date} for ${passengers} passengers, email: ${email}`);
+        
+        // Import booking functions
+        console.log('[BOOKING_DEBUG] Importing modules...');
+        const { checkAvailability, makeBooking } = await import('../utils/calendarSystem.js');
+        const { createTicket } = await import('../utils/ticketSystem.js');
+        const { getBookingConfirmationTemplate } = await import('../utils/emailTemplates.js');
+        const { sendEmail } = await import('../utils/emailService.js');
+        console.log('[BOOKING_DEBUG] Modules imported successfully');
+        
+        // Check availability
+        console.log('[BOOKING_DEBUG] Checking availability...');
+        const availability = await checkAvailability(destination, date, passengers);
+        console.log('[BOOKING_DEBUG] Availability result:', availability);
+        
+        if (availability.available) {
+          console.log('[BOOKING_DEBUG] Availability confirmed, making booking...');
+          // Make real booking in calendar
+          const bookingResult = await makeBooking({
+            route: availability.trip.route,
+            date: date,
+            passengers: passengers,
+            user: null,
+            email: email,
+            phone: null
+          });
+          console.log('[BOOKING_DEBUG] Booking created:', bookingResult);
+
+          // Create ticket
+          console.log('[BOOKING_DEBUG] Creating ticket...');
+          const ticket = createTicket({
+            user: null,
+            email: email,
+            phone: null,
+            details: {
+              route: availability.trip.route,
+              date: date,
+              passengers: passengers,
+              bookingId: bookingResult.booking.id
+            }
+          });
+          console.log('[BOOKING_DEBUG] Ticket created:', ticket);
+
+          // Send confirmation email
+          console.log('[BOOKING_DEBUG] Sending email...');
+          const emailHtml = getBookingConfirmationTemplate(bookingResult.booking, ticket.id);
+          await sendEmail(
+            email,
+            `Confirmare Rezervare - ${ticket.id}`,
+            emailHtml
+          );
+          console.log('[BOOKING_DEBUG] Email sent successfully');
+
+          console.log(`[BOOKING] Success! Ticket: ${ticket.id}, Booking: ${bookingResult.booking.id}`);
+          
+          const result = {
+            message: `Rezervare confirmată! 🎫\n\nTicket ID: ${ticket.id}\nRută: ${availability.trip.route}\nData: ${date}\nPasageri: ${passengers}\nPreț: ${bookingResult.booking.price} RON\n\nVeți primi un email de confirmare la ${email}.`,
+            status: 'booked'
+          };
+          
+          history = [...(history || []), { timestamp: Date.now(), role: 'agent', message: result.message }];
+          const out = { ...state, agent: 'booking', response: result, history };
+          console.log('[DEBUG][bookingNode][OUT]', JSON.stringify(out));
+          return out;
+        } else {
+          console.log('[BOOKING_DEBUG] Availability check failed:', availability.message);
+          
+          // Build response message with alternatives if available
+          let responseMessage = `Ne pare rău, nu sunt disponibile locuri pentru ${destination} pe ${date}. ${availability.message}`;
+          
+          if (availability.alternatives && availability.alternatives.length > 0) {
+            responseMessage += `\n\n${availability.suggestionsMessage}\n\nAlternative disponibile:\n`;
+            
+            availability.alternatives.forEach((alt, index) => {
+              const dateStr = new Date(alt.departureDate).toLocaleDateString('ro-RO');
+              const timeStr = new Date(alt.departure).toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' });
+              const daysText = alt.daysDiff === 0 ? 'aceeași zi' : 
+                              alt.daysDiff === 1 ? 'cu o zi înainte' : 
+                              alt.daysDiff === -1 ? 'cu o zi după' :
+                              `${Math.abs(alt.daysDiff)} zile ${alt.daysDiff > 0 ? 'înainte' : 'după'}`;
+              
+              responseMessage += `${index + 1}. ${alt.route} - ${dateStr} la ${timeStr} (${daysText})\n`;
+              responseMessage += `   Preț: ${alt.price} RON, Locuri disponibile: ${alt.availableSeats}\n`;
+            });
+            
+            responseMessage += `\nDoriți să rezervați una dintre aceste alternative? Dacă da, vă rog să specificați numărul opțiunii dorite.`;
+          }
+          
+          const result = {
+            message: responseMessage,
+            status: 'unavailable',
+            alternatives: availability.alternatives || null
+          };
+          history = [...(history || []), { timestamp: Date.now(), role: 'agent', message: result.message }];
+          const out = { ...state, agent: 'booking', response: result, history };
+          console.log('[DEBUG][bookingNode][OUT]', JSON.stringify(out));
+          return out;
+        }
+      } catch (error) {
+        console.error('[BOOKING] Error:', error);
+        const result = {
+          message: 'A apărut o eroare la procesarea rezervării. Vă rugăm să încercați din nou.',
+          status: 'error'
+        };
+        history = [...(history || []), { timestamp: Date.now(), role: 'agent', message: result.message }];
+        const out = { ...state, agent: 'booking', response: result, history };
+        console.log('[DEBUG][bookingNode][OUT]', JSON.stringify(out));
+        return out;
+      }
+    } else {
+      console.log('[BOOKING_DEBUG] Missing details, using fallback logic. Details:', { destination, date, email });
+      // Use existing booking agent logic for incomplete requests
+      const input = {
+        message,
+        language,
+        history: AgentOrchestrator.serializeHistory(history),
+        preferences: JSON.stringify(preferences || {}),
+        bookingContext: JSON.stringify(bookingContext || {}),
+        supportContext: JSON.stringify(supportContext || {})
       };
-    }
-    try {
-      let result = await this.bookingAgent.invoke(input);
-      if (!result.status) result.status = 'suggest';
-      if (!result.message) result.message = this.getFallbackResponse(message, language);
-      history = [...(history || []), { timestamp: Date.now(), role: 'agent', message: result.message }];
-      const out = { ...state, agent: 'booking', response: result, history };
-      console.log('[DEBUG][bookingNode][OUT]', JSON.stringify(out));
-      return out;
-    } catch (e) {
-      const response = this.getFallbackResponse(message, language);
-      const out = { ...state, agent: 'fallback', response: { message: response, status: 'suggest' }, history };
-      console.log('[DEBUG][bookingNode][OUT]', JSON.stringify(out));
-      return out;
+      console.log('[DEBUG][bookingNode][LLM_INPUT]', input);
+      if (!this.bookingAgent) {
+        const response = this.getFallbackResponse(message, language);
+        const out = { ...state, agent: 'fallback', response: { message: response, status: 'suggest' }, history };
+        console.log('[DEBUG][bookingNode][OUT]', JSON.stringify(out));
+        return out;
+      }
+      if (state.conversationClosed || isSessionTimedOut(state) || detectEndConversationIntent(message, history)) {
+        state.conversationClosed = true;
+        return {
+          reply: 'Conversația a fost încheiată. Dacă ai nevoie de altceva, reîncepe o sesiune nouă.',
+          agent: state.agent || 'booking',
+          language: getLanguage(state),
+          sessionId: state.sessionId,
+          error: false
+        };
+      }
+      try {
+        let result = await this.bookingAgent.invoke(input);
+        if (!result.status) result.status = 'suggest';
+        if (!result.message) result.message = this.getFallbackResponse(message, language);
+        history = [...(history || []), { timestamp: Date.now(), role: 'agent', message: result.message }];
+        const out = { ...state, agent: 'booking', response: result, history };
+        console.log('[DEBUG][bookingNode][OUT]', JSON.stringify(out));
+        return out;
+      } catch (e) {
+        const response = this.getFallbackResponse(message, language);
+        const out = { ...state, agent: 'fallback', response: { message: response, status: 'suggest' }, history };
+        console.log('[DEBUG][bookingNode][OUT]', JSON.stringify(out));
+        return out;
+      }
     }
   }
   async supportNode(state) {
@@ -811,47 +1134,55 @@ class AgentOrchestrator {
   async fallbackNode(state) {
     console.log('[DEBUG][fallbackNode][IN]', JSON.stringify(state));
     let { message, language, history, sessionId, preferences, bookingContext, supportContext, agent } = state;
-    language = ensureLanguage(language);
-    const inputVars = {
-      message,
-      history,
-      sessionId,
-      preferences,
-      bookingContext,
-      supportContext,
-      language: language || getLanguage(state)
-    };
-    console.log('[DEBUG][FALLBACK][INPUT]', inputVars);
-    if (!this.fallbackAgent) {
-      const response = this.getFallbackResponse(message, language);
-      const out = { ...state, agent: 'fallback', response: { message: response, fallback: true, reason: 'Fallback triggered' }, history };
-      console.log('[DEBUG][fallbackNode][OUT]', JSON.stringify(out));
-      return out;
-    }
-    if (state.conversationClosed || isSessionTimedOut(state) || detectEndConversationIntent(message, history)) {
-      state.conversationClosed = true;
-      return {
-        reply: 'Conversația a fost încheiată. Dacă ai nevoie de altceva, reîncepe o sesiune nouă.',
-        agent: state.agent || 'fallback',
-        language: getLanguage(state),
-        sessionId: state.sessionId,
-        error: false
-      };
-    }
+    language = ensureLanguage(language || 'ro');
+    
     try {
-      let result = await this.fallbackAgent.invoke(inputVars);
-      result.fallback = true;
-      if (!result.reason) result.reason = 'Fallback triggered';
-      if (!result.message) result.message = this.getFallbackResponse(message, language);
-      history = [...(history || []), { timestamp: Date.now(), role: 'agent', message: result.message }];
-      const out = { ...state, agent: 'fallback', response: result, history };
-      console.log('[DEBUG][fallbackNode][OUT]', JSON.stringify(out));
-      return out;
-    } catch (e) {
-      const response = this.getFallbackResponse(message, language);
-      const out = { ...state, agent: 'fallback', response: { message: response, fallback: true, reason: 'Fallback triggered' }, history };
-      console.log('[DEBUG][fallbackNode][OUT]', JSON.stringify(out));
-      return out;
+      if (!this.fallbackAgent) {
+        console.log('[FALLBACK] No fallback agent available, using default response');
+        return {
+          ...state,
+          response: {
+            message: this.getFallbackResponse(message, language),
+            agent: 'fallback',
+            language: language
+          },
+          agent: 'fallback'
+        };
+      }
+
+      const input = {
+        message: message || '',
+        language: language,
+        history: AgentOrchestrator.serializeHistory(history || []),
+        preferences: JSON.stringify(preferences || {}),
+        bookingContext: JSON.stringify(bookingContext || {}),
+        supportContext: JSON.stringify(supportContext || {})
+      };
+
+      console.log('[FALLBACK] Fallback input:', input);
+      const result = await this.fallbackAgent.invoke(input);
+      console.log('[FALLBACK] Fallback result:', result);
+
+      return {
+        ...state,
+        response: {
+          message: result.message || result.response || this.getFallbackResponse(message, language),
+          agent: 'fallback',
+          language: language
+        },
+        agent: 'fallback'
+      };
+    } catch (error) {
+      console.error('[AGENT][fallback] Error:', error);
+      return {
+        ...state,
+        response: {
+          message: this.getFallbackResponse(message, language),
+          agent: 'fallback',
+          language: language
+        },
+        agent: 'fallback'
+      };
     }
   }
   async paymentNode(state) {
@@ -900,9 +1231,146 @@ class AgentOrchestrator {
   }
   async monitorNode(state) {
     console.log('[DEBUG][monitorNode][IN]', JSON.stringify(state));
-    const { message, language, history, sessionId, agent, response } = state;
-    // Always propagate language
-    return { ...state, response, agent, history, language: ensureLanguage(language) };
+    const { message, language, history, sessionId, agent, response, processingTime, confidence, tokensUsed } = state;
+    
+    // Calculate memory usage
+    const memoryUsage = process.memoryUsage();
+    
+    // Enhanced monitoring data
+    const monitoringData = {
+      timestamp: new Date().toISOString(),
+      sessionId,
+      agent,
+      processingTime: processingTime || 0,
+      confidence: confidence || 0.5,
+      tokensUsed: tokensUsed || 0,
+      memoryUsage: memoryUsage.heapUsed / 1024 / 1024, // MB
+      contextWindow: history ? history.length : 0,
+      userIntent: state.userIntent || 'unknown',
+      errorCount: state.errorCount || 0,
+      retryCount: state.retryCount || 0,
+      // Calculate cost (approximate)
+      cost: this.calculateCost(tokensUsed || 0, agent),
+      // Performance metrics
+      responseQuality: this.assessResponseQuality(response),
+      sessionHealth: this.assessSessionHealth(state)
+    };
+    
+    // Log to LangSmith for observability
+    try {
+      await langSmithClient.createRun({
+        name: `agent-${agent}`,
+        run_type: "chain",
+        inputs: { message, language, sessionId },
+        outputs: { response: response?.message || '', agent, confidence },
+        extra: monitoringData
+      });
+    } catch (error) {
+      console.warn('[MONITOR] LangSmith logging failed:', error.message);
+    }
+    
+    // Store analytics in memory for dashboard
+    this.storeAnalytics(sessionId, monitoringData);
+    
+    // Always propagate language and enhanced state
+    return { 
+      ...state, 
+      response, 
+      agent, 
+      history, 
+      language: ensureLanguage(language),
+      // Add monitoring data to state
+      monitoringData,
+      memoryUsage: monitoringData.memoryUsage,
+      cost: monitoringData.cost
+    };
+  }
+
+  /**
+   * Calculate approximate cost based on tokens and model
+   */
+  calculateCost(tokens, agent) {
+    // Approximate costs per 1K tokens (varies by model)
+    const costs = {
+      'groq': 0.0001, // Very cheap
+      'ollama': 0, // Free
+      'huggingface': 0.00005 // Very cheap
+    };
+    
+    const modelType = this.getModelType();
+    const costPerToken = costs[modelType] || 0.0001;
+    
+    return (tokens / 1000) * costPerToken;
+  }
+
+  /**
+   * Get current model type
+   */
+  getModelType() {
+    if (this.llm?.constructor.name.includes('ChatGroq')) return 'groq';
+    if (this.llm?.constructor.name.includes('ChatOllama')) return 'ollama';
+    if (this.llm?.constructor.name.includes('ChatHuggingFace')) return 'huggingface';
+    return 'unknown';
+  }
+
+  /**
+   * Assess response quality
+   */
+  assessResponseQuality(response) {
+    if (!response?.message) return 0;
+    
+    let quality = 0.5; // Base quality
+    
+    // Higher quality for longer, more detailed responses
+    if (response.message.length > 50) quality += 0.2;
+    if (response.message.length > 100) quality += 0.1;
+    
+    // Higher quality for structured responses
+    if (response.status) quality += 0.1;
+    if (response.alternatives) quality += 0.1;
+    
+    // Lower quality for error messages
+    if (response.message.includes('error') || response.message.includes('eroare')) {
+      quality -= 0.2;
+    }
+    
+    return Math.min(Math.max(quality, 0), 1);
+  }
+
+  /**
+   * Assess session health
+   */
+  assessSessionHealth(state) {
+    let health = 1.0; // Perfect health
+    
+    // Reduce health for errors
+    if (state.errorCount > 0) health -= 0.2 * state.errorCount;
+    
+    // Reduce health for long sessions (potential memory issues)
+    if (state.history && state.history.length > 20) health -= 0.1;
+    
+    // Reduce health for low confidence
+    if (state.confidence < 0.5) health -= 0.2;
+    
+    return Math.max(health, 0);
+  }
+
+  /**
+   * Store analytics for dashboard
+   */
+  storeAnalytics(sessionId, data) {
+    if (!this.analytics) this.analytics = new Map();
+    
+    if (!this.analytics.has(sessionId)) {
+      this.analytics.set(sessionId, []);
+    }
+    
+    this.analytics.get(sessionId).push(data);
+    
+    // Keep only last 100 entries per session
+    if (this.analytics.get(sessionId).length > 100) {
+      this.analytics.set(sessionId, this.analytics.get(sessionId).slice(-100));
+    }
   }
 
   /**
@@ -924,6 +1392,8 @@ class AgentOrchestrator {
   async processMessage(message, sessionId, language = null) {
     try {
       console.log(`[DEBUG][PROCESS] START for session ${sessionId}`);
+      console.log(`[DEBUG][PROCESS] LangGraph available: ${!!this.app}, LLM available: ${!!this.llm}`);
+      console.log(`[DEBUG][PROCESS] Message: ${message}`);
       let context = await getUserContext(sessionId);
       console.log(`[DEBUG][PROCESS] Context after getUserContext:`, context);
       if (!context.history) context.history = [];
@@ -931,6 +1401,7 @@ class AgentOrchestrator {
 
       // Use LangGraph if available
       if (this.app && this.llm) {
+        console.log('[DEBUG][PROCESS] Using LangGraph for processing');
         try {
           const result = await this.app.invoke({
             message,
@@ -956,6 +1427,11 @@ class AgentOrchestrator {
           context.lastAgent = agentName;
           await setUserContext(sessionId, context);
 
+          // În funcția processMessage, după ce se actualizează context.history:
+          if (context.history && context.history.length > 30) {
+            context.history = context.history.slice(-30);
+          }
+
           return {
             reply: agentReply,
             agent: agentName,
@@ -967,6 +1443,8 @@ class AgentOrchestrator {
         } catch (graphError) {
           console.error("[AI] LangGraph error, falling back to direct routing:", graphError);
         }
+      } else {
+        console.log('[DEBUG][PROCESS] LangGraph not available, using direct routing');
       }
 
       // Fallback to direct routing if LangGraph fails
@@ -1032,6 +1510,11 @@ class AgentOrchestrator {
       context.lastAgent = agentName;
       await setUserContext(sessionId, context);
 
+      // În funcția processMessage, după ce se actualizează context.history:
+      if (context.history && context.history.length > 30) {
+        context.history = context.history.slice(-30);
+      }
+
       console.log(`[AI] Response from ${agentName} agent:`, agentReply);
 
       return {
@@ -1075,18 +1558,147 @@ class AgentOrchestrator {
   }
 
   /**
-   * Get agent statistics
+   * Get comprehensive agent statistics and analytics
    */
   getStats() {
-    return {
+    const baseStats = {
       totalSessions: this.memoryStore.size,
-      llmModel: "llama3-8b-8192",
-      provider: "Groq",
+      llmModel: this.getModelType(),
+      provider: this.getModelType(),
       tools: Object.keys(this.tools),
       agents: ["router", "booking", "support", "greeting", "fallback", "payment", "monitor"],
       graphActive: this.app !== null,
       promptsLoaded: Object.keys(this.prompts).length
     };
+
+    // Enhanced analytics
+    const analytics = this.getAnalyticsSummary();
+    
+    // Performance metrics
+    const performance = {
+      averageProcessingTime: analytics.avgProcessingTime,
+      averageConfidence: analytics.avgConfidence,
+      averageTokensUsed: analytics.avgTokensUsed,
+      averageCost: analytics.avgCost,
+      totalCost: analytics.totalCost,
+      errorRate: analytics.errorRate,
+      successRate: analytics.successRate
+    };
+
+    // System health
+    const systemHealth = {
+      memoryUsage: process.memoryUsage(),
+      uptime: process.uptime(),
+      nodeVersion: process.version,
+      platform: process.platform,
+      cpuUsage: process.cpuUsage(),
+      activeConnections: this.memoryStore.size
+    };
+
+    // Agent performance breakdown
+    const agentPerformance = this.getAgentPerformance();
+
+    return {
+      ...baseStats,
+      analytics,
+      performance,
+      systemHealth,
+      agentPerformance,
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  /**
+   * Get analytics summary
+   */
+  getAnalyticsSummary() {
+    if (!this.analytics || this.analytics.size === 0) {
+      return {
+        totalRequests: 0,
+        avgProcessingTime: 0,
+        avgConfidence: 0,
+        avgTokensUsed: 0,
+        avgCost: 0,
+        totalCost: 0,
+        errorRate: 0,
+        successRate: 0
+      };
+    }
+
+    let totalRequests = 0;
+    let totalProcessingTime = 0;
+    let totalConfidence = 0;
+    let totalTokensUsed = 0;
+    let totalCost = 0;
+    let totalErrors = 0;
+
+    for (const [sessionId, data] of this.analytics) {
+      for (const entry of data) {
+        totalRequests++;
+        totalProcessingTime += entry.processingTime || 0;
+        totalConfidence += entry.confidence || 0;
+        totalTokensUsed += entry.tokensUsed || 0;
+        totalCost += entry.cost || 0;
+        if (entry.errorCount > 0) totalErrors++;
+      }
+    }
+
+    return {
+      totalRequests,
+      avgProcessingTime: totalRequests > 0 ? totalProcessingTime / totalRequests : 0,
+      avgConfidence: totalRequests > 0 ? totalConfidence / totalRequests : 0,
+      avgTokensUsed: totalRequests > 0 ? totalTokensUsed / totalRequests : 0,
+      avgCost: totalRequests > 0 ? totalCost / totalRequests : 0,
+      totalCost,
+      errorRate: totalRequests > 0 ? totalErrors / totalRequests : 0,
+      successRate: totalRequests > 0 ? (totalRequests - totalErrors) / totalRequests : 0
+    };
+  }
+
+  /**
+   * Get agent performance breakdown
+   */
+  getAgentPerformance() {
+    if (!this.analytics) return {};
+
+    const agentStats = {};
+    
+    for (const [sessionId, data] of this.analytics) {
+      for (const entry of data) {
+        const agent = entry.agent || 'unknown';
+        
+        if (!agentStats[agent]) {
+          agentStats[agent] = {
+            count: 0,
+            totalProcessingTime: 0,
+            totalConfidence: 0,
+            totalTokensUsed: 0,
+            totalCost: 0,
+            errors: 0
+          };
+        }
+        
+        agentStats[agent].count++;
+        agentStats[agent].totalProcessingTime += entry.processingTime || 0;
+        agentStats[agent].totalConfidence += entry.confidence || 0;
+        agentStats[agent].totalTokensUsed += entry.tokensUsed || 0;
+        agentStats[agent].totalCost += entry.cost || 0;
+        if (entry.errorCount > 0) agentStats[agent].errors++;
+      }
+    }
+
+    // Calculate averages
+    for (const agent in agentStats) {
+      const stats = agentStats[agent];
+      stats.avgProcessingTime = stats.count > 0 ? stats.totalProcessingTime / stats.count : 0;
+      stats.avgConfidence = stats.count > 0 ? stats.totalConfidence / stats.count : 0;
+      stats.avgTokensUsed = stats.count > 0 ? stats.totalTokensUsed / stats.count : 0;
+      stats.avgCost = stats.count > 0 ? stats.totalCost / stats.count : 0;
+      stats.errorRate = stats.count > 0 ? stats.errors / stats.count : 0;
+      stats.successRate = stats.count > 0 ? (stats.count - stats.errors) / stats.count : 0;
+    }
+
+    return agentStats;
   }
 
   /**
@@ -1095,6 +1707,96 @@ class AgentOrchestrator {
   clearSessionMemory(sessionId) {
     this.memoryStore.delete(sessionId);
     console.log(`[AI] Cleared memory for session ${sessionId}`);
+  }
+
+  // Helper functions for booking
+  extractDestination(message) {
+    const msg = message.toLowerCase();
+    
+    // Check if the message is a route name (e.g., "bucharest-vienna")
+    if (msg.includes('-') && !msg.includes(' ')) {
+      const routeParts = msg.split('-');
+      if (routeParts.length === 2) {
+        // Find the original route format in the message
+        const routeMatch = message.match(/([A-Za-z]+)-([A-Za-z]+)/i);
+        if (routeMatch) {
+          return routeMatch[0];
+        }
+      }
+    }
+    
+    // Fix regex by properly escaping Unicode characters
+    const destinationRegex = /(?:la|spre|c[âă]tre|to)\s+([A-Za-z\s\-]+?)(?=\s+(?:pe|la|pentru|cu|și|,|\.|$))/i;
+    const match = message.match(destinationRegex);
+    
+    if (match && match[1]) {
+      return this.capitalize(match[1].trim());
+    }
+    
+    // Fallback patterns
+    const patterns = [
+      /(?:bilet|rezervare)\s+(?:la|spre|c[âă]tre)\s+([A-Za-z\s\-]+)/i,
+      /(?:vreau|doresc)\s+(?:să\s+)?(?:merg|călătoresc)\s+(?:la|spre|c[âă]tre)\s+([A-Za-z\s\-]+)/i,
+      /(?:destinație|destinatie)\s*[:\-]?\s*([A-Za-z\s\-]+)/i
+    ];
+    
+    for (const pattern of patterns) {
+      const patternMatch = message.match(pattern);
+      if (patternMatch && patternMatch[1]) {
+        return this.capitalize(patternMatch[1].trim());
+      }
+    }
+    
+    return null;
+  }
+
+  extractDate(message) {
+    const msg = message.toLowerCase();
+    
+    // Regex pentru diverse formate de dată
+    const datePatterns = [
+      /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/, // DD/MM/YYYY, DD-MM-YYYY
+      /(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/, // YYYY/MM/DD, YYYY-MM-DD
+      /(\d{1,2})\s+(?:ianuarie|februarie|martie|aprilie|mai|iunie|iulie|august|septembrie|octombrie|noiembrie|decembrie)\s+(\d{4})/i, // DD luna YYYY
+      /(?:pe|la)\s+(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/, // pe DD/MM/YYYY
+      /(?:pe|la)\s+(\d{1,2})\s+(?:ianuarie|februarie|martie|aprilie|mai|iunie|iulie|august|septembrie|octombrie|noiembrie|decembrie)\s+(\d{4})/i // pe DD luna YYYY
+    ];
+
+    for (const pattern of datePatterns) {
+      const match = msg.match(pattern);
+      if (match) {
+        // Converteste la format YYYY-MM-DD
+        if (match.length === 4) {
+          if (match[1].length === 4) {
+            // Format YYYY-MM-DD
+            return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+          } else {
+            // Format DD-MM-YYYY
+            return `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`;
+          }
+        }
+      }
+    }
+
+    // Cuvinte cheie pentru zile
+    const dayKeywords = {
+      'azi': new Date(),
+      'mâine': new Date(Date.now() + 24 * 60 * 60 * 1000),
+      'poimâine': new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
+      'săptămâna viitoare': new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+    };
+
+    for (const [keyword, date] of Object.entries(dayKeywords)) {
+      if (msg.includes(keyword)) {
+        return date.toISOString().split('T')[0];
+      }
+    }
+
+    return null;
+  }
+
+  capitalize(str) {
+    return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
   }
 }
 

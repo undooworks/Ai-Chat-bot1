@@ -1,4 +1,12 @@
-import { Telegraf } from 'telegraf';
+// import Telegraf only if needed, and with try/catch to avoid blocking backend
+// let Telegraf;
+// try {
+//   Telegraf = (await import('telegraf')).Telegraf;
+// } catch (e) {
+//   console.warn('[fallbackAgent] Telegraf not available, Telegram fallback disabled.');
+//   Telegraf = null;
+// }
+let Telegraf = null; // Disabled for now
 import Groq from 'groq-sdk';
 import { t, detectLanguage, getSupportedLanguages } from '../utils/i18n.js';
 
@@ -6,10 +14,10 @@ import { t, detectLanguage, getSupportedLanguages } from '../utils/i18n.js';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || 'YOUR_TELEGRAM_BOT_TOKEN';
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || 'YOUR_TELEGRAM_CHAT_ID';
 
-let bot;
-if (TELEGRAM_BOT_TOKEN && TELEGRAM_BOT_TOKEN !== 'YOUR_TELEGRAM_BOT_TOKEN') {
-  bot = new Telegraf(TELEGRAM_BOT_TOKEN);
-}
+// let bot;
+// if (TELEGRAM_BOT_TOKEN && TELEGRAM_BOT_TOKEN !== 'YOUR_TELEGRAM_BOT_TOKEN') {
+//   bot = new Telegraf(TELEGRAM_BOT_TOKEN);
+// }
 
 function getGroqClient() {
   if (process.env.GROQ_API_KEY) {
